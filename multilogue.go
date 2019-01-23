@@ -3,9 +3,14 @@ package main
 import inet "github.com/libp2p/go-libp2p-net"
 
 // pattern: /protocol-name/request-or-response-message/version
+const clientJoinChannel = "/multilogue/clientjoinchannel/0.0.1"
+const clientLeaveChannel = "/multilogue/clientleavechannel/0.0.1"
 const clientSendMessage = "/multilogue/clientsendmessage/0.0.1"
 const clientTransmissionStart = "/multilogue/clienttransmissionstart/0.0.1"
 const clientTransmissionEnd = "/multilogue/clienttransmissionend/0.0.1"
+
+const hostAcceptClient = "/multilogue/hostacceptclient/0.0.1"
+const hostDenyClient = "/multilogue/hostdenyclient/0.0.1"
 const hostAcceptTransmission = "/multilogue/hostaccepttransmission/0.0.1"
 const hostDenyTransmission = "/multilogue/hostdenytransmission/0.0.1"
 const hostBroadcastMessage = "/multilogue/hostbroadcastmessage/0.0.1"
@@ -31,9 +36,14 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	p := &MultilogueProtocol{
 		node: node}
 
+	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
+	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
 	node.SetStreamHandler(clientSendMessage, p.onClientSendMessage)
 	node.SetStreamHandler(clientTransmissionStart, p.onClientTransmissionStart)
 	node.SetStreamHandler(clientTransmissionEnd, p.onClientTransmissionEnd)
+
+	node.SetStreamHandler(hostAcceptClient, p.onHostAcceptClient)
+	node.SetStreamHandler(hostDenyClient, p.onHostDenyClient)
 	node.SetStreamHandler(hostAcceptTransmission, p.onHostAcceptTransmission)
 	node.SetStreamHandler(hostDenyTransmission, p.onHostDenyTransmission)
 	node.SetStreamHandler(hostBroadcastMessage, p.onHostBroadcastMessage)
@@ -56,4 +66,16 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 }
 
 func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
+}
+
+func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
+}
+
+func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
+}
+
+func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
+}
+
+func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 }
