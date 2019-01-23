@@ -10,6 +10,16 @@ const hostAcceptTransmission = "/multilogue/hostaccepttransmission/0.0.1"
 const hostDenyTransmission = "/multilogue/hostdenytransmission/0.0.1"
 const hostBroadcastMessage = "/multilogue/hostbroadcastmessage/0.0.1"
 
+// Protocol state enum
+type ProtocolState int
+
+const (
+	HostRequestWait ProtocolState = iota
+	HostMessageWait
+	ClientAcceptWait
+	ClientSendMessage
+)
+
 // MultilogueProtocol type
 type MultilogueProtocol struct {
 	node *Node // local host
