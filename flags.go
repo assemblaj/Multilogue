@@ -2,7 +2,7 @@
 // Authors
 // Abhishek Upperwal
 // Mantas Vidutis
-
+// TODO: Read config file form here too
 package main
 
 import (
