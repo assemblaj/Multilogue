@@ -15,6 +15,31 @@ const hostAcceptTransmission = "/multilogue/hostaccepttransmission/0.0.1"
 const hostDenyTransmission = "/multilogue/hostdenytransmission/0.0.1"
 const hostBroadcastMessage = "/multilogue/hostbroadcastmessage/0.0.1"
 
+// might add more data for statistics later
+// join timestamp
+// total messages
+// etc etc
+type Peer struct {
+	peerId           string
+	username         string
+	lastMessage      int // unix timestamp of last message
+	lastTransmission int // unix timestamp of last transmission
+}
+
+type Transmission struct {
+	channelId string
+	peer      *Peer
+	totalMsgs int
+	startTime int
+}
+
+type Channel struct {
+	channelId string
+	history   []string // peer Ids of users who last spoke
+	peers     []Peer   // slice of peer objects
+	// probably need a map of peerId to cooldown
+}
+
 // Protocol state enum
 type ProtocolState int
 
