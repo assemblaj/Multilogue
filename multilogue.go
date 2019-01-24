@@ -38,6 +38,7 @@ type Channel struct {
 	history   []string // peer Ids of users who last spoke
 	peers     []Peer   // slice of peer objects
 	// probably need a map of peerId to cooldown
+	currentTransmission *Transmission
 }
 
 // Protocol state enum
@@ -103,4 +104,14 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 }
 
 func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
+}
+
+// TODO: Design proper API
+func (p *MultilogueProtocol) SendMessage() {
+}
+
+func (p *MultilogueProtocol) JoinChannel() {
+}
+
+func (p *MultilogueProtocol) ExitChannel() {
 }
