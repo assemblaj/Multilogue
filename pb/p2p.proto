@@ -82,3 +82,36 @@ message HostBroadcastMessage {
 
 }
 
+message ClientJoinChannel {
+    MessageData messageData = 1;
+
+    // method specific data
+    ClientData clientData = 2;
+    HostData hostData = 3;
+}
+
+message ClientLeaveChannel {
+    MessageData messageData = 1;
+
+    ClientData clientData = 2;
+    HostData hostData = 3;
+}
+
+message HostAcceptClient {
+    MessageData messageData = 1;
+
+    // method specific data
+    ClientData clientData = 2;
+    HostData hostData = 3;
+}
+
+message HostDenyClient {
+    MessageData messageData = 1;
+
+    // method specific data
+    ClientData clientData = 2;
+    HostData hostData = 3;
+}
+
+
+
