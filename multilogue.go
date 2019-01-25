@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"log"
 
 	p2p "github.com/assemblaj/Multilogue/pb"
+	protobufCodec "github.com/multiformats/go-multicodec/protobuf"
 
 	uuid "github.com/google/uuid"
 	inet "github.com/libp2p/go-libp2p-net"
@@ -44,8 +46,8 @@ type Transmission struct {
 
 type Channel struct {
 	channelId string
-	history   []string // peer Ids of users who last spoke
-	peers     []Peer   // slice of peer objects
+	history   []string         // peer Ids of users who last spoke
+	peers     map[string]*Peer // slice of peer objects
 	// probably need a map of peerId to cooldown
 	currentTransmission *Transmission
 }
@@ -90,16 +92,54 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 }
 
+// verify this and set new transmission
 func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
+
 }
 
+// verify this and delete transmission
 func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
+
 }
 
+// add to channel
 func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
+
 }
 
+// delete form channel
 func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
+	// get request data
+	data := &p2p.ClientLeaveChannel{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	// Leaving channel
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// remove request from map as we have processed it here
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			delete(channel.peers, data.ClientData.PeerId)
+		}
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
 }
 
 // Handled when Client
@@ -110,6 +150,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {}
 
 func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
+
 }
 
 func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {}
