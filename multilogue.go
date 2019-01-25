@@ -6,6 +6,7 @@ import (
 	"log"
 
 	p2p "github.com/assemblaj/Multilogue/pb"
+	"github.com/gogo/protobuf/proto"
 	protobufCodec "github.com/multiformats/go-multicodec/protobuf"
 
 	uuid "github.com/google/uuid"
@@ -89,10 +90,14 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 }
 
 // Handled when hosting
+// Validate and broadcast this message to all peers
+// deny if necesary
 func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
+
 }
 
 // verify this and set new transmission
+// deny if necesary
 func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 }
@@ -127,7 +132,6 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 			currentChannelClient := channel.currentTransmission.peer.peerId
 			givenChannelClient := data.HostData.PeerId
 			remoteRequester := s.Conn().RemotePeer().String()
-
 			if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
 				channel.currentTransmission = nil
 			}
@@ -139,7 +143,95 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 }
 
 // add to channel
+// deny if necesary
 func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
+	// get request data
+	data := &p2p.ClientJoinChannel{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	// Adding to channel
+	accepted := false
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// Accept if the peerId and username aren't already in the channel
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if !hasPeer {
+			accepted = true
+			for _, peer := range channel.peers {
+				if data.ClientData.Username == peer.username {
+					accepted = false
+				}
+			}
+		}
+	}
+
+	// generate response message
+	// Returning separate messages based on accepted or not
+	var resp proto.Message
+	var respErr error
+
+	if accepted {
+		resp = &p2p.HostAcceptClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+			ClientData: data.ClientData,
+			HostData:   data.HostData}
+
+		// sign the data
+		signature, err := p.node.signProtoMessage(resp)
+		if err != nil {
+			log.Println("failed to sign response")
+			return
+		}
+
+		// Cannot take the above code outside of the if because I need to do the following
+		acceptClientResp := resp.(*p2p.HostAcceptClient)
+
+		// add the signature to the message
+		acceptClientResp.MessageData.Sign = signature
+
+		// Have to use the constant for the protocol message name string because reasons
+		// So that had to be done within this if
+		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostAcceptClient)
+	} else {
+		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+			ClientData: data.ClientData,
+			HostData:   data.HostData}
+
+		// sign the data
+		signature, err := p.node.signProtoMessage(resp)
+		if err != nil {
+			log.Println("failed to sign response")
+			return
+		}
+		denyClientResp := resp.(*p2p.HostDenyClient)
+
+		// add the signature to the message
+		denyClientResp.MessageData.Sign = signature
+		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
+	}
+	if respErr != nil {
+		log.Println(respErr)
+		return
+	}
+
+	// send the response
+	ok := p.node.sendProtoMessage(resp, s)
+
+	if ok {
+		log.Printf("%s: Join Channel response to %s sent.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+	}
 
 }
 
@@ -179,12 +271,14 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 }
 
 // Handled when Client
+// Start sending messages
 func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 
 }
 
 func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {}
 
+// Start reading messages
 func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 
 }
