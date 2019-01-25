@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	p2p "github.com/assemblaj/GravitationProtocol/pb"
+	p2p "github.com/assemblaj/Multilogue/pb"
 
 	"github.com/gogo/protobuf/proto"
 	crypto "github.com/libp2p/go-libp2p-crypto"

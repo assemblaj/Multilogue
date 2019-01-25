@@ -1,6 +1,15 @@
 package main
 
-import inet "github.com/libp2p/go-libp2p-net"
+import (
+	"context"
+	"log"
+
+	p2p "github.com/assemblaj/Multilogue/pb"
+
+	uuid "github.com/google/uuid"
+	inet "github.com/libp2p/go-libp2p-net"
+	peer "github.com/libp2p/go-libp2p-peer"
+)
 
 // pattern: /protocol-name/request-or-response-message/version
 const clientJoinChannel = "/multilogue/clientjoinchannel/0.0.1"
@@ -53,7 +62,8 @@ const (
 
 // MultilogueProtocol type
 type MultilogueProtocol struct {
-	node *Node // local host
+	node     *Node               // local host
+	channels map[string]*Channel // channelId : *Channel
 }
 
 // NewMultilogueProtocol Create instance of protocol
@@ -76,6 +86,7 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	return p
 }
 
+// Handled when hosting
 func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 }
 
@@ -85,33 +96,150 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 }
 
-func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
-}
-
-func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
-}
-
-func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
-}
-
 func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 }
 
 func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 }
 
-func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
+// Handled when Client
+func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
+
 }
 
-func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
+func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {}
+
+func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 }
+
+func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {}
+
+func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {}
 
 // TODO: Design proper API
-func (p *MultilogueProtocol) SendMessage() {
+func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) bool {
+	log.Printf("%s: Sending message to % Channel : %s....", p.node.ID(), hostPeerID, channelId)
+
+	// create message data
+	req := &p2p.ClientSendMessage{
+		MessageData: p.node.NewMessageData(uuid.New().String(), false),
+		ClientData: &p2p.ClientData{
+			PeerId:   clientPeer.peerId,
+			Username: clientPeer.username},
+		HostData: &p2p.HostData{
+			ChannelId: channelId,
+			PeerId:    hostPeerID.String()},
+		Message: message}
+
+	// sign the data
+	signature, err := p.node.signProtoMessage(req)
+	if err != nil {
+		log.Println("failed to sign pb data")
+		return false
+	}
+
+	// add the signature to the message
+	req.MessageData.Sign = signature
+
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	ok := p.node.sendProtoMessage(req, s)
+
+	if !ok {
+		return false
+	}
+
+	// store ref request so response handler has access to it
+	//p.requests[req.MessageData.Id] = req
+	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
+	return true
+
 }
 
-func (p *MultilogueProtocol) JoinChannel() {
+func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+	log.Printf("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+
+	// create message data
+	req := &p2p.ClientJoinChannel{
+		MessageData: p.node.NewMessageData(uuid.New().String(), false),
+		ClientData: &p2p.ClientData{
+			PeerId:   clientPeer.peerId,
+			Username: clientPeer.username},
+		HostData: &p2p.HostData{
+			ChannelId: channelId,
+			PeerId:    hostPeerID.String()}}
+
+	// sign the data
+	signature, err := p.node.signProtoMessage(req)
+	if err != nil {
+		log.Println("failed to sign pb data")
+		return false
+	}
+
+	// add the signature to the message
+	req.MessageData.Sign = signature
+
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientJoinChannel)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	ok := p.node.sendProtoMessage(req, s)
+
+	if !ok {
+		return false
+	}
+
+	// store ref request so response handler has access to it
+	//p.requests[req.MessageData.Id] = req
+	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
+	return true
+
 }
 
-func (p *MultilogueProtocol) ExitChannel() {
+func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+	log.Printf("%s: Leaving %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+
+	// create message data
+	req := &p2p.ClientLeaveChannel{
+		MessageData: p.node.NewMessageData(uuid.New().String(), false),
+		ClientData: &p2p.ClientData{
+			PeerId:   clientPeer.peerId,
+			Username: clientPeer.username},
+		HostData: &p2p.HostData{
+			ChannelId: channelId,
+			PeerId:    hostPeerID.String()}}
+
+	// sign the data
+	signature, err := p.node.signProtoMessage(req)
+	if err != nil {
+		log.Println("failed to sign pb data")
+		return false
+	}
+
+	// add the signature to the message
+	req.MessageData.Sign = signature
+
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientLeaveChannel)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	ok := p.node.sendProtoMessage(req, s)
+
+	if !ok {
+		return false
+	}
+
+	// store ref request so response handler has access to it
+	//p.requests[req.MessageData.Id] = req
+	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id)
+	return true
+
 }
