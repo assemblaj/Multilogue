@@ -99,6 +99,42 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 // verify this and delete transmission
 func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
+	// get request data
+	data := &p2p.ClientTransmissionEnd{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) ending transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	// Leaving channel
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// remove request from map as we have processed it here
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			currentChannelClient := channel.currentTransmission.peer.peerId
+			givenChannelClient := data.HostData.PeerId
+			remoteRequester := s.Conn().RemotePeer().String()
+
+			if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
+				channel.currentTransmission = nil
+			}
+		}
+	}
+
+	log.Printf("%s: User: %s (%s) ended transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
 
 }
 
