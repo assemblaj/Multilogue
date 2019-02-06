@@ -93,12 +93,221 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 // Validate and broadcast this message to all peers
 // deny if necesary
 func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
+	// get request data
+	data := &p2p.ClientSendMessage{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	accepted := false
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// Accept if the peerId and username aren't already in the channel
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			if channel.currentTransmission != nil {
+				currentChannelClient := channel.currentTransmission.peer.peerId
+				givenChannelClient := data.HostData.PeerId
+				remoteRequester := s.Conn().RemotePeer().String()
+				if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
+					// put logic here about message limit, character limit, timeout, etc
+					accepted = true
+				}
+			}
+		}
+	}
+
+	// generate response message
+	// Returning separate messages based on accepted or not
+	var resp proto.Message
+	var respErr error
+
+	if accepted {
+
+		for peerID, _ := range channel.peers {
+			resp = &p2p.HostBroadcastMessage{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+				ClientData: data.ClientData,
+				HostData:   data.HostData,
+				Message:    data.Message}
+
+			libp2pPeerID, err := peer.IDFromString(peerID)
+			if err != nil {
+				log.Println("failed to make peer id")
+				return
+			}
+
+			// sign the data
+			signature, err := p.node.signProtoMessage(resp)
+			if err != nil {
+				log.Println("failed to sign response")
+				return
+			}
+
+			// Cannot take the above code outside of the if because I need to do the following
+			acceptClientResp := resp.(*p2p.HostAcceptClient)
+
+			// add the signature to the message
+			acceptClientResp.MessageData.Sign = signature
+
+			// Have to use the constant for the protocol message name string because reasons
+			// So that had to be done within this if
+			s, respErr = p.node.NewStream(context.Background(), libp2pPeerID, hostBroadcastMessage)
+
+			if respErr != nil {
+				log.Println(respErr)
+				return
+			}
+
+			// send the response
+			ok := p.node.sendProtoMessage(resp, s)
+			if ok {
+				log.Printf("%s: Message from %s recieved.", s.Conn().LocalPeer().String(), peerID)
+			}
+		}
+	} else {
+		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+			ClientData: data.ClientData,
+			HostData:   data.HostData}
+
+		// sign the data
+		signature, err := p.node.signProtoMessage(resp)
+		if err != nil {
+			log.Println("failed to sign response")
+			return
+		}
+		denyClientResp := resp.(*p2p.HostDenyClient)
+
+		// add the signature to the message
+		denyClientResp.MessageData.Sign = signature
+		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
+
+		if respErr != nil {
+			log.Println(respErr)
+			return
+		}
+
+		// send the response
+		ok := p.node.sendProtoMessage(resp, s)
+		if ok {
+			log.Printf("%s: Denying Message from %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+		}
+	}
 }
 
 // verify this and set new transmission
 // deny if necesary
 func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
+	// get request data
+	data := &p2p.ClientTransmissionStart{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	accepted := true
+	channel, exists := p.channels[data.HostData.ChannelId]
+	var peer *Peer
+	if exists {
+		peer, hasPeer := channel.peers[data.ClientData.PeerId]
+		if !hasPeer {
+			accepted = false
+		}
+		if channel.currentTransmission != nil {
+			accepted = false
+		}
+		for _, peerID := range channel.history {
+			if data.ClientData.PeerId == peerID {
+				accepted = false
+			}
+		}
+		// TODO:  implement cooldown period using lastMessageSent and some Configs
+		if peer.lastMessage+peer.lastTransmission == 0 {
+			// placeholder
+		}
+	} else {
+		accepted = false
+	}
+
+	// generate response message
+	// Returning separate messages based on accepted or not
+	var resp proto.Message
+	var respErr error
+
+	if accepted {
+		// Create new transmission
+		channel.currentTransmission = &Transmission{
+			channelId: data.HostData.ChannelId,
+			peer:      peer}
+
+		resp = &p2p.HostAcceptTransmission{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+			ClientData: data.ClientData,
+			HostData:   data.HostData}
+
+		// sign the data
+		signature, err := p.node.signProtoMessage(resp)
+		if err != nil {
+			log.Println("failed to sign response")
+			return
+		}
+
+		// Cannot take the above code outside of the if because I need to do the following
+		acceptClientResp := resp.(*p2p.HostAcceptClient)
+
+		// add the signature to the message
+		acceptClientResp.MessageData.Sign = signature
+
+		// Have to use the constant for the protocol message name string because reasons
+		// So that had to be done within this if
+		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostAcceptTransmission)
+	} else {
+		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
+			ClientData: data.ClientData,
+			HostData:   data.HostData}
+
+		// sign the data
+		signature, err := p.node.signProtoMessage(resp)
+		if err != nil {
+			log.Println("failed to sign response")
+			return
+		}
+		denyClientResp := resp.(*p2p.HostDenyClient)
+
+		// add the signature to the message
+		denyClientResp.MessageData.Sign = signature
+		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
+	}
+	if respErr != nil {
+		log.Println(respErr)
+		return
+	}
+
+	// send the response
+	ok := p.node.sendProtoMessage(resp, s)
+
+	if ok {
+		log.Printf("%s: Transmisison attempted from  %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+	}
 
 }
 
