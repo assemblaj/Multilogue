@@ -176,6 +176,12 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 				}
 			}
 		}
+		if accepted {
+			channel.peers[data.ClientData.PeerId] = &Peer{
+				peerId:   data.ClientData.PeerId,
+				username: data.ClientData.Username,
+			}
+		}
 	}
 
 	// generate response message
