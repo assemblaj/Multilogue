@@ -546,6 +546,48 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 
 }
 
+func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+	log.Printf("%s: Sending request to % Channel : %s....", p.node.ID(), hostPeerID, channelId)
+
+	// create message data
+	req := &p2p.ClientTransmissionStart{
+		MessageData: p.node.NewMessageData(uuid.New().String(), false),
+		ClientData: &p2p.ClientData{
+			PeerId:   clientPeer.peerId,
+			Username: clientPeer.username},
+		HostData: &p2p.HostData{
+			ChannelId: channelId,
+			PeerId:    hostPeerID.String()}}
+
+	// sign the data
+	signature, err := p.node.signProtoMessage(req)
+	if err != nil {
+		log.Println("failed to sign pb data")
+		return false
+	}
+
+	// add the signature to the message
+	req.MessageData.Sign = signature
+
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	ok := p.node.sendProtoMessage(req, s)
+
+	if !ok {
+		return false
+	}
+
+	// store ref request so response handler has access to it
+	//p.requests[req.MessageData.Id] = req
+	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
+	return true
+
+}
+
 func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
 	log.Printf("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
