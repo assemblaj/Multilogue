@@ -38,11 +38,38 @@ type Peer struct {
 	lastTransmission int // unix timestamp of last transmission
 }
 
+type InputSession struct {
+	start   chan bool
+	stop    chan bool
+	current bool
+	total   int
+}
+
+func NewInputSession() *InputSession {
+	is := new(InputSession)
+	is.start = make(chan bool)
+	is.stop = make(chan bool)
+	return is
+}
+
+type OutputSession struct {
+	messageQueue chan string
+	queueSize    int
+}
+
+func NewOutputSession(queueSize int) *OutputSession {
+	os := new(OutputSession)
+	os.queueSize = queueSize
+	os.messageQueue = make(chan string, os.queueSize)
+	return os
+}
+
 type Transmission struct {
 	channelId string
 	peer      *Peer
 	totalMsgs int
 	startTime int
+	input     InputSession
 }
 
 type Channel struct {
@@ -51,6 +78,7 @@ type Channel struct {
 	peers     map[string]*Peer // slice of peer objects
 	// probably need a map of peerId to cooldown
 	currentTransmission *Transmission
+	output              OutputSession
 }
 
 // Protocol state enum
