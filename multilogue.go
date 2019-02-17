@@ -38,6 +38,18 @@ type Peer struct {
 	lastTransmission int // unix timestamp of last transmission
 }
 
+type JoinState struct {
+	accepted chan bool
+	denied   chan bool
+}
+
+func NewJoinState() *JoinState {
+	es := new(JoinState)
+	es.accepted = make(chan bool)
+	es.denied = make(chan bool)
+	return es
+}
+
 type InputSession struct {
 	start   chan bool
 	stop    chan bool
@@ -69,7 +81,6 @@ type Transmission struct {
 	peer      *Peer
 	totalMsgs int
 	startTime int
-	input     InputSession
 }
 
 type Channel struct {
@@ -78,7 +89,9 @@ type Channel struct {
 	peers     map[string]*Peer // slice of peer objects
 	// probably need a map of peerId to cooldown
 	currentTransmission *Transmission
-	output              OutputSession
+	output              *OutputSession
+	input               *InputSession
+	join                *JoinState
 }
 
 // Protocol state enum
@@ -516,19 +529,175 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 // Handled when Client
 // Start sending messages
 func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
+	// get request data
+	data := &p2p.HostAcceptTransmission{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	// Leaving channel
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// remove request from map as we have processed it here
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			if channel.currentTransmission == nil {
+				channel.currentTransmission = &Transmission{}
+				channel.input = NewInputSession()
+
+				// Alert the UI that the client is the speaker
+				channel.input.current = true
+				channel.input.start <- true
+			}
+		}
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
-func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {}
+func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
+	// get request data
+	data := &p2p.HostAcceptClient{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// remove request from map as we have processed it here
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			// Alert that input has been
+			channel.input.stop <- true
+
+			// After UI has acknowledged the above message, delete the channel
+			channel.input.stop <- true
+			delete(p.channels, data.HostData.ChannelId)
+		}
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+}
 
 // Start reading messages
 func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
+	// get request data
+	data := &p2p.HostBroadcastMessage{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+
+	// Protocol Logic
+	// Leaving channel
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		// remove request from map as we have processed it here
+		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		if hasPeer {
+			if channel.output == nil {
+				channel.output = NewOutputSession(1) //TODO: Replace with some default/config
+			}
+			// Alert the UI that a new message has been recieved in the channel
+			channel.output.messageQueue <- data.Message
+		}
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
-func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {}
+// TODO: Create Channel etc on the cleint side
+// As well as InputSession
+func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
+	// get request data
+	data := &p2p.HostAcceptClient{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 
-func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {}
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		channel.join.accepted <- true
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+}
+
+func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
+	// get request data
+	data := &p2p.HostDenyClient{}
+	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
+	err := decoder.Decode(data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+	valid := p.node.authenticateMessage(data, data.MessageData)
+
+	if !valid {
+		log.Println("Failed to authenticate message")
+		return
+	}
+	channel, exists := p.channels[data.HostData.ChannelId]
+	if exists {
+		channel.join.denied <- true
+	}
+
+	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+
+}
 
 // TODO: Design proper API
 func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) bool {
@@ -616,6 +785,26 @@ func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, c
 
 }
 
+func (p *MultilogueProtocol) CreateChannel(channelId string) {
+	// Creating Channel Obj
+	_, exists := p.channels[channelId]
+	// remove the channel
+	if !exists {
+		p.channels[channelId] = &Channel{
+			channelId: channelId,
+			output:    NewOutputSession(1), //TODO: Replace with some default/config
+			input:     NewInputSession(),
+			join:      NewJoinState()}
+	}
+}
+
+func (p *MultilogueProtocol) DeleteChannel(channelId string) {
+	_, exists := p.channels[channelId]
+	if exists {
+		delete(p.channels, channelId)
+	}
+}
+
 func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
 	log.Printf("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
@@ -650,6 +839,13 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	if !ok {
 		return false
 	}
+
+	// Creating Channel Obj
+	p.channels[channelId] = &Channel{
+		channelId: channelId,
+		output:    NewOutputSession(1), //TODO: Replace with some default/config
+		input:     NewInputSession(),
+		join:      NewJoinState()}
 
 	// store ref request so response handler has access to it
 	//p.requests[req.MessageData.Id] = req
@@ -691,6 +887,13 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 
 	if !ok {
 		return false
+	}
+
+	// Protocol logic
+	_, exists := p.channels[channelId]
+	// remove the channel
+	if exists {
+		delete(p.channels, channelId)
 	}
 
 	// store ref request so response handler has access to it
