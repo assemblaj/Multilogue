@@ -92,6 +92,7 @@ type Channel struct {
 	output              *OutputSession
 	input               *InputSession
 	join                *JoinState
+	config              *ChannelConfig
 }
 
 // Protocol state enum
@@ -785,7 +786,11 @@ func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, c
 
 }
 
-func (p *MultilogueProtocol) CreateChannel(channelId string) {
+func (p *MultilogueProtocol) CreateChannel(channelId string, config *ChannelConfig) {
+	if config == nil {
+		config = DefaultChannelConfig()
+	}
+
 	// Creating Channel Obj
 	_, exists := p.channels[channelId]
 	// remove the channel
@@ -794,7 +799,8 @@ func (p *MultilogueProtocol) CreateChannel(channelId string) {
 			channelId: channelId,
 			output:    NewOutputSession(1), //TODO: Replace with some default/config
 			input:     NewInputSession(),
-			join:      NewJoinState()}
+			join:      NewJoinState(),
+			config:    config}
 	}
 }
 

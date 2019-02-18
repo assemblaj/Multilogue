@@ -101,14 +101,14 @@ func ReadChannelConfigs(fname string, config *ChannelConfig) {
 	}
 }
 
-func DefaultChannelConfig() (ChannelConfig, error) {
+func DefaultChannelConfig() *ChannelConfig {
 
-	defaultChannelConfig := ChannelConfig{
+	defaultChannelConfig := &ChannelConfig{
 		MessageLimit:    5,
 		CooldownPeriod:  30,  // Seconds
 		TimeLimit:       3,   // Minutes
 		MaxMessageRatio: .05, // Between 0, 1
 		HistorySize:     2}
 
-	return defaultChannelConfig, nil
+	return defaultChannelConfig
 }
