@@ -6,7 +6,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"io/ioutil"
+	"log"
 	"strings"
 
 	maddr "github.com/multiformats/go-multiaddr"
@@ -59,6 +62,14 @@ type Config struct {
 	ProtocolID       string
 }
 
+type ChannelConfig struct {
+	MessageLimit    int
+	CooldownPeriod  int
+	TimeLimit       int
+	MaxMessageRatio float64
+	HistorySize     int
+}
+
 func ParseFlags() (Config, error) {
 	config := Config{}
 	flag.StringVar(&config.RendezvousString, "rendezvous", "gravitation",
@@ -77,4 +88,27 @@ func ParseFlags() (Config, error) {
 	}
 
 	return config, nil
+}
+
+func ReadChannelConfigs(fname string, config *ChannelConfig) {
+	b, err := ioutil.ReadFile(fname)
+	if err != nil {
+		log.Println("Error reading data from file. ")
+	}
+	err = json.Unmarshal(b, config)
+	if err != nil {
+		log.Println("Error loading data. ")
+	}
+}
+
+func DefaultChannelConfig() (ChannelConfig, error) {
+
+	defaultChannelConfig := ChannelConfig{
+		MessageLimit:    5,
+		CooldownPeriod:  30,  // Seconds
+		TimeLimit:       3,   // Minutes
+		MaxMessageRatio: .05, // Between 0, 1
+		HistorySize:     2}
+
+	return defaultChannelConfig, nil
 }
