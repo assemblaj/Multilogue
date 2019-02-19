@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"log"
+	"time"
 
 	p2p "github.com/assemblaj/Multilogue/pb"
 	"github.com/gogo/protobuf/proto"
@@ -34,8 +35,8 @@ const hostBroadcastMessage = "/multilogue/hostbroadcastmessage/0.0.1"
 type Peer struct {
 	peerId           string
 	username         string
-	lastMessage      int // unix timestamp of last message
-	lastTransmission int // unix timestamp of last transmission
+	lastMessage      time.Time // unix timestamp of last message
+	lastTransmission time.Time // unix timestamp of last transmission
 }
 
 type JoinState struct {
@@ -80,7 +81,9 @@ type Transmission struct {
 	channelId string
 	peer      *Peer
 	totalMsgs int
-	startTime int
+	startTime time.Time
+	done      chan bool // notifies timer when transmission is ended
+	timeEnded bool
 }
 
 type Channel struct {
@@ -153,22 +156,46 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 
 	// Protocol Logic
 	accepted := false
+
+	var currentChannelClient string
+	var givenChannelClient string
+	var remoteRequester string
+	var sessionLength time.Duration
+	var messageRatio float64
+
 	channel, exists := p.channels[data.HostData.ChannelId]
-	if exists {
-		// Accept if the peerId and username aren't already in the channel
+	if !exists {
 		_, hasPeer := channel.peers[data.ClientData.PeerId]
-		if hasPeer {
-			if channel.currentTransmission != nil {
-				currentChannelClient := channel.currentTransmission.peer.peerId
-				givenChannelClient := data.HostData.PeerId
-				remoteRequester := s.Conn().RemotePeer().String()
-				if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
-					// put logic here about message limit, character limit, timeout, etc
-					accepted = true
-				}
-			}
+		if !hasPeer {
+			goto Response
 		}
 	}
+
+	if channel.currentTransmission == nil {
+		goto Response
+	}
+
+	// valid peer id
+	currentChannelClient = channel.currentTransmission.peer.peerId
+	givenChannelClient = data.HostData.PeerId
+	remoteRequester = s.Conn().RemotePeer().String()
+	if !(currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester) {
+		// put logic here about message limit, character limit, timeout, etc
+		goto Response
+	}
+
+	if channel.currentTransmission.totalMsgs+1 > channel.config.MessageLimit {
+		goto Response
+	}
+
+	sessionLength = time.Now().Sub(channel.currentTransmission.startTime)
+	messageRatio = float64(channel.currentTransmission.totalMsgs) / sessionLength.Seconds()
+	if messageRatio > channel.config.MaxMessageRatio {
+		goto Response
+	}
+
+	accepted = true
+Response:
 
 	// generate response message
 	// Returning separate messages based on accepted or not
@@ -176,6 +203,8 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	var respErr error
 
 	if accepted {
+		// Updating increment messages
+		channel.currentTransmission.totalMsgs = channel.currentTransmission.totalMsgs + 1
 
 		for peerID, _ := range channel.peers {
 			resp = &p2p.HostBroadcastMessage{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
@@ -218,6 +247,9 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 			}
 		}
 	} else {
+		peer := channel.peers[data.ClientData.PeerId]
+		peer.lastTransmission = time.Now()
+
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
 			HostData:   data.HostData}
@@ -278,14 +310,16 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		if channel.currentTransmission != nil {
 			accepted = false
 		}
-		for _, peerID := range channel.history {
+
+		// If its in the last X transmissions
+		for _, peerID := range channel.history[channel.config.HistorySize:len(channel.history)] {
 			if data.ClientData.PeerId == peerID {
 				accepted = false
 			}
 		}
-		// TODO:  implement cooldown period using lastMessageSent and some Configs
-		if peer.lastMessage+peer.lastTransmission == 0 {
-			// placeholder
+
+		if time.Now().Sub(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
+			accepted = false
 		}
 	} else {
 		accepted = false
@@ -297,10 +331,27 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	var respErr error
 
 	if accepted {
+		channel.history = append(channel.history, data.ClientData.PeerId)
+
 		// Create new transmission
 		channel.currentTransmission = &Transmission{
 			channelId: data.HostData.ChannelId,
-			peer:      peer}
+			peer:      peer,
+			startTime: time.Now(),
+			done:      make(chan bool)}
+
+		// Time limit handling
+		go func() {
+			timeLimit := time.Duration(channel.config.TimeLimit) * time.Second
+			transmissionTimer := time.NewTimer(timeLimit)
+
+			select {
+			case <-channel.currentTransmission.done:
+				return
+			case <-transmissionTimer.C:
+				channel.currentTransmission.timeEnded = true
+			}
+		}()
 
 		resp = &p2p.HostAcceptTransmission{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
