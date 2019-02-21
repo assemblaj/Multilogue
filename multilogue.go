@@ -118,7 +118,8 @@ type MultilogueProtocol struct {
 // Might want a data object
 func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	p := &MultilogueProtocol{
-		node: node}
+		node:     node,
+		channels: make(map[string]*Channel)}
 
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
 	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
@@ -753,7 +754,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 
 // TODO: Design proper API
 func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) bool {
-	log.Printf("%s: Sending message to % Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	log.Printf("%s: Sending message to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientSendMessage{
@@ -796,7 +797,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 }
 
 func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
-	log.Printf("%s: Sending request to % Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	log.Printf("%s: Sending request to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientTransmissionStart{
