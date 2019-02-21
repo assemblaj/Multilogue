@@ -42,3 +42,15 @@ func TestCreateChannel(t *testing.T) {
 		t.Errorf("CreateChannel failed to create channel.")
 	}
 }
+
+func TestDeleteChannel(t *testing.T) {
+	host := makeTestNode()
+
+	host.CreateChannel("test", DefaultChannelConfig())
+	host.DeleteChannel("test")
+
+	_, exists := host.channels["test"]
+	if exists {
+		t.Errorf("CreateChannel failed to delete channel.")
+	}
+}
