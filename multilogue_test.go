@@ -5,18 +5,16 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
+
+	ps "github.com/libp2p/go-libp2p-peerstore"
 
 	libp2p "github.com/libp2p/go-libp2p"
 	crypto "github.com/libp2p/go-libp2p-crypto"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-// helper method - create a lib-p2p host to listen on a port
-func makeTestNode() *Node {
-	// Generating random post
-	rand.Seed(666)
-	port := rand.Intn(100) + 10000
-
+func makeTestNodePort(port int) *Node {
 	// Ignoring most errors for brevity
 	// See echo example for more details and better implementation
 	priv, _, _ := crypto.GenerateKeyPair(crypto.Secp256k1, 256)
@@ -29,6 +27,15 @@ func makeTestNode() *Node {
 	)
 
 	return NewNode(host)
+}
+
+// helper method - create a lib-p2p host to listen on a port
+func makeTestNode() *Node {
+	// Generating random post
+	rand.Seed(666)
+	port := rand.Intn(100) + 10000
+
+	return makeTestNodePort(port)
 }
 
 // API Tests
@@ -51,6 +58,48 @@ func TestDeleteChannel(t *testing.T) {
 
 	_, exists := host.channels["test"]
 	if exists {
-		t.Errorf("CreateChannel failed to delete channel.")
+		t.Errorf("DeleteChannel failed to delete channel.")
+	}
+}
+
+func TestJoinChannel(t *testing.T) {
+	rand.Seed(666)
+	port := rand.Intn(100) + 10000
+
+	host1 := makeTestNodePort(port)
+	host2 := makeTestNodePort(port + 1)
+
+	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
+	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
+
+	host1.CreateChannel("test", DefaultChannelConfig())
+
+	host2IDString := host2.ID().String()
+
+	host2Peer := &Peer{
+		peerId:   host2IDString,
+		username: "host2"}
+
+	host2.JoinChannel(host2Peer, host1.ID(), "test")
+
+	var host2Notified bool
+
+	host2TestChannel, channelExists := host2.channels["test"]
+	if !channelExists {
+		t.Errorf("Test channel was not added to chanel 2 ")
+	}
+
+	select {
+	case host2Notified = <-host2TestChannel.join.accepted:
+		break
+	case <-time.After(1 * time.Second):
+		host2Notified = false
+		break
+	}
+
+	_, host1AddedChannel := host1.channels["test"].peers[host2IDString]
+
+	if !host1AddedChannel || !host2Notified {
+		t.Errorf("Failed to join channel. host1AddedChannel: %t host2Notified: %t ", host1AddedChannel, host2Notified)
 	}
 }

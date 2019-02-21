@@ -98,6 +98,22 @@ type Channel struct {
 	config              *ChannelConfig
 }
 
+func NewChannel(channelId string, config *ChannelConfig) *Channel {
+	if config == nil {
+		config = DefaultChannelConfig()
+	}
+
+	c := &Channel{
+		channelId: channelId,
+		history:   []string{},
+		peers:     make(map[string]*Peer),
+		output:    NewOutputSession(1), //TODO: Replace with some default/config
+		input:     NewInputSession(),
+		join:      NewJoinState(),
+		config:    config}
+	return c
+}
+
 // Protocol state enum
 type ProtocolState int
 
@@ -709,7 +725,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Joining Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -719,10 +735,12 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 	}
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
+		log.Printf("It exists %s channel", data.HostData.ChannelId)
+
 		channel.join.accepted <- true
 	}
 
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Joined Channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 }
 
 func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
@@ -839,20 +857,11 @@ func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, c
 }
 
 func (p *MultilogueProtocol) CreateChannel(channelId string, config *ChannelConfig) {
-	if config == nil {
-		config = DefaultChannelConfig()
-	}
-
 	// Creating Channel Obj
 	_, exists := p.channels[channelId]
 	// remove the channel
 	if !exists {
-		p.channels[channelId] = &Channel{
-			channelId: channelId,
-			output:    NewOutputSession(1), //TODO: Replace with some default/config
-			input:     NewInputSession(),
-			join:      NewJoinState(),
-			config:    config}
+		p.channels[channelId] = NewChannel(channelId, config)
 	}
 }
 
@@ -899,11 +908,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	}
 
 	// Creating Channel Obj
-	p.channels[channelId] = &Channel{
-		channelId: channelId,
-		output:    NewOutputSession(1), //TODO: Replace with some default/config
-		input:     NewInputSession(),
-		join:      NewJoinState()}
+	p.channels[channelId] = NewChannel(channelId, nil)
 
 	// store ref request so response handler has access to it
 	//p.requests[req.MessageData.Id] = req
