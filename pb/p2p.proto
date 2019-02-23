@@ -15,6 +15,9 @@ message MessageData {
 }
 
 //// Multilogue protocol 
+message ProtocolMessage {
+    MessageData messageData = 1;
+}
 
 message ClientData {
     string peerId = 1;
@@ -70,6 +73,8 @@ message HostDenyTransmission {
     // method specific data
     ClientData clientData = 2;
     HostData hostData = 3;
+
+    int32 errorCode = 4;    
 }
 
 message HostBroadcastMessage {
@@ -111,6 +116,7 @@ message HostDenyClient {
     // method specific data
     ClientData clientData = 2;
     HostData hostData = 3;
+    int32 errorCode = 4;
 }
 
 
