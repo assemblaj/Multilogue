@@ -80,17 +80,17 @@ func TestJoinChannel(t *testing.T) {
 		peerId:   host2IDString,
 		username: "host2"}
 
-	host2.JoinChannel(host2Peer, host1.ID(), "test")
+	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
 	var host2Notified bool
 
-	host2TestChannel, channelExists := host2.channels["test"]
+	_, channelExists := host2.channels["test"]
 	if !channelExists {
 		t.Errorf("Test channel was not added to chanel 2 ")
 	}
 
 	select {
-	case host2Notified = <-host2TestChannel.join.accepted:
+	case host2Notified = <-req.success:
 		break
 	case <-time.After(1 * time.Second):
 		host2Notified = false
@@ -102,4 +102,42 @@ func TestJoinChannel(t *testing.T) {
 	if !host1AddedChannel || !host2Notified {
 		t.Errorf("Failed to join channel. host1AddedChannel: %t host2Notified: %t ", host1AddedChannel, host2Notified)
 	}
+}
+
+func TestLeaveChannel(t *testing.T) {
+	rand.Seed(666)
+	port := rand.Intn(100) + 10000
+
+	host1 := makeTestNodePort(port)
+	host2 := makeTestNodePort(port + 1)
+
+	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
+	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
+
+	host1.CreateChannel("test", DefaultChannelConfig())
+
+	host2IDString := host2.ID().String()
+
+	host2Peer := &Peer{
+		peerId:   host2IDString,
+		username: "host2"}
+
+	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
+
+	select {
+	case <-req.success:
+		host2.LeaveChannel(host2Peer, host1.ID(), "test")
+		break
+	case <-time.After(1 * time.Second):
+		break
+	}
+
+	<-time.After(2 * time.Second)
+	channel := host1.channels["test"]
+
+	_, peerExists := channel.peers[host2IDString]
+	if peerExists {
+		t.Errorf("Host2 was not remove from channel. ")
+	}
+
 }

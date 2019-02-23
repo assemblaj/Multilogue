@@ -114,6 +114,17 @@ func NewChannel(channelId string, config *ChannelConfig) *Channel {
 	return c
 }
 
+type Request struct {
+	success chan bool
+	fail    chan bool
+}
+
+func NewRequest() *Request {
+	return &Request{
+		success: make(chan bool),
+		fail:    make(chan bool)}
+}
+
 // Protocol state enum
 type ProtocolState int
 
@@ -128,6 +139,7 @@ const (
 type MultilogueProtocol struct {
 	node     *Node               // local host
 	channels map[string]*Channel // channelId : *Channel
+	requests map[string]*Request // used to access request data from response handlers
 }
 
 // NewMultilogueProtocol Create instance of protocol
@@ -135,7 +147,8 @@ type MultilogueProtocol struct {
 func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	p := &MultilogueProtocol{
 		node:     node,
-		channels: make(map[string]*Channel)}
+		channels: make(map[string]*Channel),
+		requests: make(map[string]*Request)}
 
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
 	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
@@ -616,22 +629,38 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 		return
 	}
 
+	// If there's no request, then simply print an error and return
+	request, requestExists := p.requests[data.MessageData.Id]
+	if !requestExists {
+		log.Println("Request not found ")
+		return
+	}
+
 	// Protocol Logic
 	// Leaving channel
-	channel, exists := p.channels[data.HostData.ChannelId]
-	if exists {
-		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
-		if hasPeer {
-			if channel.currentTransmission == nil {
-				channel.currentTransmission = &Transmission{}
-				channel.input = NewInputSession()
+	channel, channelExists := p.channels[data.HostData.ChannelId]
 
-				// Alert the UI that the client is the speaker
-				channel.input.current = true
-				channel.input.start <- true
-			}
-		}
+	if !channelExists {
+		request.fail <- true
+		return
+	}
+
+	_, hasPeer := channel.peers[data.ClientData.PeerId]
+	if !hasPeer {
+		request.fail <- true
+		return
+	}
+
+	request.success <- true
+
+	// remove request from map as we have processed it here
+	if channel.currentTransmission == nil {
+		channel.currentTransmission = &Transmission{}
+		channel.input = NewInputSession()
+
+		// Alert the UI that the client is the speaker
+		channel.input.current = true
+		channel.input.start <- true
 	}
 
 	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
@@ -640,7 +669,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 
 func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 	// get request data
-	data := &p2p.HostAcceptClient{}
+	data := &p2p.HostDenyTransmission{}
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
@@ -656,19 +685,32 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 		log.Println("Failed to authenticate message")
 		return
 	}
-	channel, exists := p.channels[data.HostData.ChannelId]
-	if exists {
-		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
-		if hasPeer {
-			// Alert that input has been
-			channel.input.stop <- true
 
-			// After UI has acknowledged the above message, delete the channel
-			channel.input.stop <- true
-			delete(p.channels, data.HostData.ChannelId)
-		}
+	// If there's no request, then simply print an error and return
+	request, requestExists := p.requests[data.MessageData.Id]
+	if !requestExists {
+		log.Println("Request not found ")
+		return
 	}
+
+	channel, channelExists := p.channels[data.HostData.ChannelId]
+	if !channelExists {
+		request.fail <- true
+		return
+	}
+
+	_, hasPeer := channel.peers[data.ClientData.PeerId]
+	if !hasPeer {
+		request.fail <- true
+		return
+	}
+
+	// Alert that input has been
+	channel.input.stop <- true
+
+	// After UI has acknowledged the above message, delete the channel
+	channel.input.stop <- true
+	delete(p.channels, data.HostData.ChannelId)
 
 	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
@@ -685,6 +727,8 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		return
 	}
 
+	clientPeerId := p.node.ID().String()
+
 	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
@@ -694,13 +738,21 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		return
 	}
 
+	request, requestExists := p.requests[data.MessageData.Id]
+	if !requestExists {
+		log.Println("Request not found ")
+		return
+	}
+
 	// Protocol Logic
 	// Leaving channel
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
-		// remove request from map as we have processed it here
 		_, hasPeer := channel.peers[data.ClientData.PeerId]
 		if hasPeer {
+			if clientPeerId == data.ClientData.PeerId {
+				request.success <- true
+			}
 			if channel.output == nil {
 				channel.output = NewOutputSession(1) //TODO: Replace with some default/config
 			}
@@ -733,11 +785,20 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 		log.Println("Failed to authenticate message")
 		return
 	}
-	channel, exists := p.channels[data.HostData.ChannelId]
-	if exists {
-		log.Printf("It exists %s channel", data.HostData.ChannelId)
 
-		channel.join.accepted <- true
+	_, channelExists := p.channels[data.HostData.ChannelId]
+	request, requestExists := p.requests[data.MessageData.Id]
+
+	// Update request data
+	if requestExists {
+		if channelExists {
+			request.success <- true
+		} else {
+			request.fail <- true
+		}
+	} else {
+		log.Println("Failed to locate request data boject for response")
+		return
 	}
 
 	log.Printf("%s: User: %s (%s) Joined Channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
@@ -761,17 +822,22 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 		log.Println("Failed to authenticate message")
 		return
 	}
-	channel, exists := p.channels[data.HostData.ChannelId]
-	if exists {
-		channel.join.denied <- true
+	// If there's no request, then simply print an error and return
+	request, requestExists := p.requests[data.MessageData.Id]
+	if !requestExists {
+		log.Println("Request not found ")
+		return
 	}
+
+	// Update request data
+	request.fail <- true
 
 	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
 // TODO: Design proper API
-func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) bool {
+func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) (*Request, bool) {
 	log.Printf("%s: Sending message to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
@@ -789,7 +855,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
 		log.Println("failed to sign pb data")
-		return false
+		return nil, false
 	}
 
 	// add the signature to the message
@@ -798,23 +864,21 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
 	if err != nil {
 		log.Println(err)
-		return false
+		return nil, false
 	}
 
 	ok := p.node.sendProtoMessage(req, s)
 
 	if !ok {
-		return false
+		return nil, false
 	}
 
-	// store ref request so response handler has access to it
-	//p.requests[req.MessageData.Id] = req
-	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
-	return true
-
+	// Add request to request list
+	p.requests[req.MessageData.Id] = NewRequest()
+	return p.requests[req.MessageData.Id], true
 }
 
-func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
 	log.Printf("%s: Sending request to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
@@ -831,7 +895,7 @@ func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, c
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
 		log.Println("failed to sign pb data")
-		return false
+		return nil, false
 	}
 
 	// add the signature to the message
@@ -840,19 +904,19 @@ func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, c
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
 	if err != nil {
 		log.Println(err)
-		return false
+		return nil, false
 	}
 
 	ok := p.node.sendProtoMessage(req, s)
 
 	if !ok {
-		return false
+		return nil, false
 	}
 
-	// store ref request so response handler has access to it
-	//p.requests[req.MessageData.Id] = req
-	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
-	return true
+	// Add request to request list
+	p.requests[req.MessageData.Id] = NewRequest()
+
+	return p.requests[req.MessageData.Id], true
 
 }
 
@@ -872,7 +936,7 @@ func (p *MultilogueProtocol) DeleteChannel(channelId string) {
 	}
 }
 
-func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
 	log.Printf("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
@@ -889,7 +953,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
 		log.Println("failed to sign pb data")
-		return false
+		return nil, false
 	}
 
 	// add the signature to the message
@@ -898,26 +962,25 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientJoinChannel)
 	if err != nil {
 		log.Println(err)
-		return false
+		return nil, false
 	}
 
 	ok := p.node.sendProtoMessage(req, s)
 
 	if !ok {
-		return false
+		return nil, false
 	}
 
 	// Creating Channel Obj
 	p.channels[channelId] = NewChannel(channelId, nil)
 
-	// store ref request so response handler has access to it
-	//p.requests[req.MessageData.Id] = req
-	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id, req.Profile, req.SubOrbit)
-	return true
+	// Add request to request list
+	p.requests[req.MessageData.Id] = NewRequest()
 
+	return p.requests[req.MessageData.Id], true
 }
 
-func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) bool {
+func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
 	log.Printf("%s: Leaving %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
@@ -934,7 +997,7 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
 		log.Println("failed to sign pb data")
-		return false
+		return nil, false
 	}
 
 	// add the signature to the message
@@ -943,13 +1006,13 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientLeaveChannel)
 	if err != nil {
 		log.Println(err)
-		return false
+		return nil, false
 	}
 
 	ok := p.node.sendProtoMessage(req, s)
 
 	if !ok {
-		return false
+		return nil, false
 	}
 
 	// Protocol logic
@@ -959,9 +1022,8 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 		delete(p.channels, channelId)
 	}
 
-	// store ref request so response handler has access to it
-	//p.requests[req.MessageData.Id] = req
-	//log.Printf("%s: Gravitation to: %s was sent. Message Id: %s", p.node.ID(), hostPeerID, req.MessageData.Id)
-	return true
+	// Add request to request list
+	p.requests[req.MessageData.Id] = NewRequest()
 
+	return p.requests[req.MessageData.Id], true
 }
