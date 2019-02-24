@@ -15,10 +15,6 @@ message MessageData {
 }
 
 //// Multilogue protocol 
-message ProtocolMessage {
-    MessageData messageData = 1;
-}
-
 message ClientData {
     string peerId = 1;
     string username = 2;
