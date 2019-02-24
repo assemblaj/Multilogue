@@ -141,3 +141,52 @@ func TestLeaveChannel(t *testing.T) {
 	}
 
 }
+
+func TestReqestTransmission(t *testing.T) {
+	rand.Seed(666)
+	port := rand.Intn(100) + 10000
+
+	host1 := makeTestNodePort(port)
+	host2 := makeTestNodePort(port + 1)
+
+	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
+	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
+
+	host1.CreateChannel("test", DefaultChannelConfig())
+
+	host2IDString := host2.ID().String()
+
+	host2Peer := &Peer{
+		peerId:   host2IDString,
+		username: "host2"}
+
+	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
+
+	requestRecieved := false
+
+	select {
+	case <-req.success:
+		req2, _ := host2.SendTransmissionRequest(host2Peer, host1.ID(), "test")
+		select {
+		// Just testing if the request was recieved at all. Ideally it should be
+		// accepted in this scenario (first user starting transmisison), but
+		// that's not what we're testing
+		case <-req2.success:
+			requestRecieved = true
+			break
+		case <-req2.fail:
+			requestRecieved = true
+			break
+		case <-time.After(1 * time.Second):
+			break
+		}
+		break
+	case <-time.After(1 * time.Second):
+		break
+	}
+
+	if !requestRecieved {
+		t.Errorf("Host2 request not sent or recieved. ")
+	}
+
+}
