@@ -140,6 +140,7 @@ type MultilogueProtocol struct {
 	node     *Node               // local host
 	channels map[string]*Channel // channelId : *Channel
 	requests map[string]*Request // used to access request data from response handlers
+	debug    bool
 }
 
 // NewMultilogueProtocol Create instance of protocol
@@ -148,7 +149,8 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	p := &MultilogueProtocol{
 		node:     node,
 		channels: make(map[string]*Channel),
-		requests: make(map[string]*Request)}
+		requests: make(map[string]*Request),
+		debug:    true}
 
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
 	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
@@ -162,6 +164,12 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	node.SetStreamHandler(hostDenyTransmission, p.onHostDenyTransmission)
 	node.SetStreamHandler(hostBroadcastMessage, p.onHostBroadcastMessage)
 	return p
+}
+
+func (p *MultilogueProtocol) debugPrintln(v ...interface{}) {
+	if p.debug {
+		log.Println(v...)
+	}
 }
 
 // Handled when hosting
@@ -197,11 +205,13 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	if !exists {
 		_, hasPeer := channel.peers[data.ClientData.PeerId]
 		if !hasPeer {
+			p.debugPrintln("In onClientSendMessage: Denied because peer not found.")
 			goto Response
 		}
 	}
 
 	if channel.currentTransmission == nil {
+		p.debugPrintln("In onClientSendMessage: Denied because transmission doesn't exist.")
 		goto Response
 	}
 
@@ -210,17 +220,19 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	givenChannelClient = data.HostData.PeerId
 	remoteRequester = s.Conn().RemotePeer().String()
 	if !(currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester) {
-		// put logic here about message limit, character limit, timeout, etc
+		p.debugPrintln("In onClientSendMessage: Denied because transmisison peer id, given peer id and remote peer id are not equal.")
 		goto Response
 	}
 
 	if channel.currentTransmission.totalMsgs+1 > channel.config.MessageLimit {
+		p.debugPrintln("In onClientSendMessage: Denied because meessage limit reached.")
 		goto Response
 	}
 
 	sessionLength = time.Now().Sub(channel.currentTransmission.startTime)
 	messageRatio = float64(channel.currentTransmission.totalMsgs) / sessionLength.Seconds()
 	if messageRatio > channel.config.MaxMessageRatio {
+		p.debugPrintln("In onClientSendMessage: Denied because message ratio passed.")
 		goto Response
 	}
 
@@ -256,10 +268,10 @@ Response:
 			}
 
 			// Cannot take the above code outside of the if because I need to do the following
-			acceptClientResp := resp.(*p2p.HostAcceptClient)
+			broadcastResp := resp.(*p2p.HostBroadcastMessage)
 
 			// add the signature to the message
-			acceptClientResp.MessageData.Sign = signature
+			broadcastResp.MessageData.Sign = signature
 
 			// Have to use the constant for the protocol message name string because reasons
 			// So that had to be done within this if
@@ -342,7 +354,17 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		}
 
 		// If its in the last X transmissions
-		for _, peerID := range channel.history[channel.config.HistorySize:len(channel.history)] {
+		var currentHistory []string
+		end := len(channel.history)
+		start := end - channel.config.HistorySize
+
+		if start < 9 {
+			currentHistory = channel.history[0:end]
+		} else {
+			currentHistory = channel.history[start:end]
+		}
+
+		for _, peerID := range currentHistory {
 			if data.ClientData.PeerId == peerID {
 				accepted = false
 			}
@@ -395,7 +417,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		}
 
 		// Cannot take the above code outside of the if because I need to do the following
-		acceptClientResp := resp.(*p2p.HostAcceptClient)
+		acceptClientResp := resp.(*p2p.HostAcceptTransmission)
 
 		// add the signature to the message
 		acceptClientResp.MessageData.Sign = signature
@@ -901,7 +923,7 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 	// add the signature to the message
 	req.MessageData.Sign = signature
 
-	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientTransmissionStart)
 	if err != nil {
 		log.Println(err)
 		return nil, false
