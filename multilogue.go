@@ -878,7 +878,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	return p.requests[req.MessageData.Id], true
 }
 
-func (p *MultilogueProtocol) SendRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
+func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
 	log.Printf("%s: Sending request to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
@@ -1025,5 +1025,45 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	// Add request to request list
 	p.requests[req.MessageData.Id] = NewRequest()
 
+	return p.requests[req.MessageData.Id], true
+}
+
+func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
+	log.Printf("%s: Ending transmission %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+
+	// create message data
+	req := &p2p.ClientTransmissionEnd{
+		MessageData: p.node.NewMessageData(uuid.New().String(), false),
+		ClientData: &p2p.ClientData{
+			PeerId:   clientPeer.peerId,
+			Username: clientPeer.username},
+		HostData: &p2p.HostData{
+			ChannelId: channelId,
+			PeerId:    hostPeerID.String()}}
+
+	// sign the data
+	signature, err := p.node.signProtoMessage(req)
+	if err != nil {
+		log.Println("failed to sign pb data")
+		return nil, false
+	}
+
+	// add the signature to the message
+	req.MessageData.Sign = signature
+
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientLeaveChannel)
+	if err != nil {
+		log.Println(err)
+		return nil, false
+	}
+
+	ok := p.node.sendProtoMessage(req, s)
+
+	if !ok {
+		return nil, false
+	}
+
+	// Add request to request list
+	p.requests[req.MessageData.Id] = NewRequest()
 	return p.requests[req.MessageData.Id], true
 }
