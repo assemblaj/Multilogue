@@ -244,3 +244,61 @@ func TestSendMessage(t *testing.T) {
 	}
 
 }
+
+func TestEndTransmission(t *testing.T) {
+	rand.Seed(666)
+	port := rand.Intn(100) + 10000
+
+	host1 := makeTestNodePort(port)
+	host2 := makeTestNodePort(port + 1)
+
+	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
+	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
+
+	host1.CreateChannel("test", DefaultChannelConfig())
+
+	host2Peer := &Peer{
+		peerID:   host2.ID(),
+		username: "host2"}
+
+	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
+
+	transmissionEnded := false
+
+	select {
+	case <-req.success:
+		req2, _ := host2.SendTransmissionRequest(host2Peer, host1.ID(), "test")
+		select {
+		// Just testing if the request was recieved at all. Ideally it should be
+		// accepted in this scenario (first user starting transmisison), but
+		// that's not what we're testing
+		case <-req2.success:
+			req3, _ := host2.SendMessage(host2Peer, host1.ID(), "test", "Hello World!")
+			select {
+			case <-req3.success:
+				host2.EndTransmission(host2Peer, host1.ID(), "test")
+				select {
+				case <-time.After(3 * time.Second):
+					if host1.channels["test"].currentTransmission == nil {
+						transmissionEnded = true
+					}
+					break
+				}
+				break
+			case <-time.After(3 * time.Second):
+				break
+			}
+			break
+		case <-time.After(3 * time.Second):
+			break
+		}
+		break
+	case <-time.After(3 * time.Second):
+		break
+	}
+
+	if !transmissionEnded {
+		t.Errorf("Host2 transmission not ended. ")
+	}
+
+}

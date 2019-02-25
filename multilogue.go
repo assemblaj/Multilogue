@@ -436,6 +436,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 			select {
 			case <-channel.currentTransmission.done:
+				log.Println("timer returning, transmission done")
 				return
 			case <-transmissionTimer.C:
 				channel.currentTransmission.timeEnded = true
@@ -532,9 +533,23 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 			givenChannelClient := clientPeerIDString
 			remoteRequester := s.Conn().RemotePeer().String()
 			if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
+				channel.currentTransmission.done <- true
+
+				log.Println("timer returned, making current transmisison nil ")
+
 				channel.currentTransmission = nil
+				log.Println(" current transmisison nil ", channel.currentTransmission)
+
+			} else {
+				p.debugPrintln("In onClientTransmissionEnd: currentChannelClient, givenChannelClient , remoteRequester  Not the same.")
+				p.debugPrintln("In onClientTransmissionEnd: ", currentChannelClient, " ", givenChannelClient, " ", remoteRequester)
 			}
+		} else {
+			p.debugPrintln("In onClientTransmissionEnd: Peer not found .")
 		}
+	} else {
+		p.debugPrintln("In onClientTransmissionEnd: Channel not found .")
+
 	}
 
 	log.Printf("%s: User: %s (%s) ended transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
@@ -1157,7 +1172,7 @@ func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.I
 	// add the signature to the message
 	req.MessageData.Sign = signature
 
-	s, err := p.node.NewStream(context.Background(), hostPeerID, clientLeaveChannel)
+	s, err := p.node.NewStream(context.Background(), hostPeerID, clientTransmissionEnd)
 	if err != nil {
 		log.Println(err)
 		return nil, false
