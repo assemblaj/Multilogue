@@ -16,13 +16,13 @@ message MessageData {
 
 //// Multilogue protocol 
 message ClientData {
-    string peerId = 1;
+    bytes peerId = 1;
     string username = 2;
 }
 
 message HostData {
     string channelId = 1;
-    string peerId = 2;
+    bytes peerId = 2;
 }
 
 // a protocol define a set of reuqest and responses
