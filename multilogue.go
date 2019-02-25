@@ -33,7 +33,7 @@ const hostBroadcastMessage = "/multilogue/hostbroadcastmessage/0.0.1"
 // total messages
 // etc etc
 type Peer struct {
-	peerId           string
+	peerID           peer.ID
 	username         string
 	lastMessage      time.Time // unix timestamp of last message
 	lastTransmission time.Time // unix timestamp of last transmission
@@ -176,6 +176,8 @@ func (p *MultilogueProtocol) debugPrintln(v ...interface{}) {
 // Validate and broadcast this message to all peers
 // deny if necesary
 func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
+	p.debugPrintln("In onClientSendMessage: Message accepted.")
+
 	// get request data
 	data := &p2p.ClientSendMessage{}
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
@@ -192,6 +194,13 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	// Protocol Logic
 	accepted := false
 
@@ -203,7 +212,7 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if !exists {
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		_, hasPeer := channel.peers[clientPeerIDString]
 		if !hasPeer {
 			p.debugPrintln("In onClientSendMessage: Denied because peer not found.")
 			goto Response
@@ -216,11 +225,13 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	}
 
 	// valid peer id
-	currentChannelClient = channel.currentTransmission.peer.peerId
-	givenChannelClient = data.HostData.PeerId
+	currentChannelClient = channel.currentTransmission.peer.peerID.String()
+	givenChannelClient = clientPeerIDString
 	remoteRequester = s.Conn().RemotePeer().String()
 	if !(currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester) {
 		p.debugPrintln("In onClientSendMessage: Denied because transmisison peer id, given peer id and remote peer id are not equal.")
+		p.debugPrintln(currentChannelClient, " ", givenChannelClient, " ", remoteRequester)
+
 		goto Response
 	}
 
@@ -237,6 +248,7 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	}
 
 	accepted = true
+
 Response:
 
 	// generate response message
@@ -248,17 +260,11 @@ Response:
 		// Updating increment messages
 		channel.currentTransmission.totalMsgs = channel.currentTransmission.totalMsgs + 1
 
-		for peerID, _ := range channel.peers {
+		for peerID, currentPeer := range channel.peers {
 			resp = &p2p.HostBroadcastMessage{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 				ClientData: data.ClientData,
 				HostData:   data.HostData,
 				Message:    data.Message}
-
-			libp2pPeerID, err := peer.IDFromString(peerID)
-			if err != nil {
-				log.Println("failed to make peer id")
-				return
-			}
 
 			// sign the data
 			signature, err := p.node.signProtoMessage(resp)
@@ -275,7 +281,7 @@ Response:
 
 			// Have to use the constant for the protocol message name string because reasons
 			// So that had to be done within this if
-			s, respErr = p.node.NewStream(context.Background(), libp2pPeerID, hostBroadcastMessage)
+			s, respErr = p.node.NewStream(context.Background(), currentPeer.peerID, hostBroadcastMessage)
 
 			if respErr != nil {
 				log.Println(respErr)
@@ -289,7 +295,7 @@ Response:
 			}
 		}
 	} else {
-		peer := channel.peers[data.ClientData.PeerId]
+		peer := channel.peers[clientPeerIDString]
 		peer.lastTransmission = time.Now()
 
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
@@ -340,12 +346,18 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	// Protocol Logic
 	accepted := true
 	channel, exists := p.channels[data.HostData.ChannelId]
-	var peer *Peer
 	if exists {
-		peer, hasPeer := channel.peers[data.ClientData.PeerId]
+		peer, hasPeer := channel.peers[clientPeerIDString]
 		if !hasPeer {
 			accepted = false
 		}
@@ -365,7 +377,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		}
 
 		for _, peerID := range currentHistory {
-			if data.ClientData.PeerId == peerID {
+			if clientPeerIDString == peerID {
 				accepted = false
 			}
 		}
@@ -383,8 +395,8 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	var respErr error
 
 	if accepted {
-		channel.history = append(channel.history, data.ClientData.PeerId)
-
+		channel.history = append(channel.history, clientPeerIDString)
+		peer := channel.peers[clientPeerIDString]
 		// Create new transmission
 		channel.currentTransmission = &Transmission{
 			channelId: data.HostData.ChannelId,
@@ -476,15 +488,22 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	// Protocol Logic
 	// Leaving channel
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
 		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		_, hasPeer := channel.peers[clientPeerIDString]
 		if hasPeer {
-			currentChannelClient := channel.currentTransmission.peer.peerId
-			givenChannelClient := data.HostData.PeerId
+			currentChannelClient := channel.currentTransmission.peer.peerID.String()
+			givenChannelClient := clientPeerIDString
 			remoteRequester := s.Conn().RemotePeer().String()
 			if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
 				channel.currentTransmission = nil
@@ -515,13 +534,20 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	// Protocol Logic
 	// Adding to channel
 	accepted := false
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
 		// Accept if the peerId and username aren't already in the channel
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		_, hasPeer := channel.peers[clientPeerIDString]
 		if !hasPeer {
 			accepted = true
 			for _, peer := range channel.peers {
@@ -531,8 +557,8 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 			}
 		}
 		if accepted {
-			channel.peers[data.ClientData.PeerId] = &Peer{
-				peerId:   data.ClientData.PeerId,
+			channel.peers[clientPeerIDString] = &Peer{
+				peerID:   clientPeerID,
 				username: data.ClientData.Username,
 			}
 		}
@@ -606,7 +632,7 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Leaving Channel %s. (Client)", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -615,14 +641,21 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	// Protocol Logic
 	// Leaving channel
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
 		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		_, hasPeer := channel.peers[clientPeerIDString]
 		if hasPeer {
-			delete(channel.peers, data.ClientData.PeerId)
+			delete(channel.peers, clientPeerIDString)
 		}
 	}
 
@@ -642,12 +675,19 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Transmission Accepted from host on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
 		log.Println("Failed to authenticate message")
+		return
+	}
+
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -663,15 +703,18 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	channel, channelExists := p.channels[data.HostData.ChannelId]
 
 	if !channelExists {
+		p.debugPrintln("In onHostAcceptTransmission: Denied because channel doesn't exist")
 		request.fail <- true
 		return
 	}
 
-	_, hasPeer := channel.peers[data.ClientData.PeerId]
+	_, hasPeer := channel.peers[clientPeerIDString]
 	if !hasPeer {
+		p.debugPrintln("In onHostAcceptTransmission: Denied because peer doesn't exist: ", data.ClientData.PeerId)
 		request.fail <- true
 		return
 	}
+	p.debugPrintln("In onHostAcceptTransmission: Success")
 
 	request.success <- true
 
@@ -679,6 +722,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	if channel.currentTransmission == nil {
 		channel.currentTransmission = &Transmission{}
 		channel.input = NewInputSession()
+		p.debugPrintln("In onHostAcceptTransmission: Input Session starting ")
 
 		// Alert the UI that the client is the speaker
 		channel.input.current = true
@@ -699,12 +743,19 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Transmision denied on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
 		log.Println("Failed to authenticate message")
+		return
+	}
+
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -721,7 +772,7 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 		return
 	}
 
-	_, hasPeer := channel.peers[data.ClientData.PeerId]
+	_, hasPeer := channel.peers[clientPeerIDString]
 	if !hasPeer {
 		request.fail <- true
 		return
@@ -751,7 +802,7 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 
 	clientPeerId := p.node.ID().String()
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Message being broadcasted on channel  %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -760,19 +811,25 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		return
 	}
 
+	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
+	clientPeerIDString := clientPeerID.String()
+	if err != nil {
+		log.Println("Failed to obtain Client Peer ID")
+		return
+	}
+
 	request, requestExists := p.requests[data.MessageData.Id]
 	if !requestExists {
 		log.Println("Request not found ")
 		return
 	}
-
 	// Protocol Logic
 	// Leaving channel
 	channel, exists := p.channels[data.HostData.ChannelId]
 	if exists {
-		_, hasPeer := channel.peers[data.ClientData.PeerId]
+		_, hasPeer := channel.peers[clientPeerIDString]
 		if hasPeer {
-			if clientPeerId == data.ClientData.PeerId {
+			if clientPeerId == clientPeerIDString {
 				request.success <- true
 			}
 			if channel.output == nil {
@@ -836,7 +893,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	log.Printf("%s: User: %s (%s) Client denied of channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -866,17 +923,17 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	req := &p2p.ClientSendMessage{
 		MessageData: p.node.NewMessageData(uuid.New().String(), false),
 		ClientData: &p2p.ClientData{
-			PeerId:   clientPeer.peerId,
+			PeerId:   []byte(string(clientPeer.peerID)),
 			Username: clientPeer.username},
 		HostData: &p2p.HostData{
 			ChannelId: channelId,
-			PeerId:    hostPeerID.String()},
+			PeerId:    []byte(string(hostPeerID))},
 		Message: message}
 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data")
+		log.Println("failed to sign pb data: ", err)
 		return nil, false
 	}
 
@@ -907,11 +964,11 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 	req := &p2p.ClientTransmissionStart{
 		MessageData: p.node.NewMessageData(uuid.New().String(), false),
 		ClientData: &p2p.ClientData{
-			PeerId:   clientPeer.peerId,
+			PeerId:   []byte(string(clientPeer.peerID)),
 			Username: clientPeer.username},
 		HostData: &p2p.HostData{
 			ChannelId: channelId,
-			PeerId:    hostPeerID.String()}}
+			PeerId:    []byte(string(hostPeerID))}}
 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
@@ -965,16 +1022,16 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	req := &p2p.ClientJoinChannel{
 		MessageData: p.node.NewMessageData(uuid.New().String(), false),
 		ClientData: &p2p.ClientData{
-			PeerId:   clientPeer.peerId,
+			PeerId:   []byte(string(clientPeer.peerID)),
 			Username: clientPeer.username},
 		HostData: &p2p.HostData{
 			ChannelId: channelId,
-			PeerId:    hostPeerID.String()}}
+			PeerId:    []byte(string(hostPeerID))}}
 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data")
+		log.Println("failed to sign pb data: ", err)
 		return nil, false
 	}
 
@@ -995,6 +1052,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 
 	// Creating Channel Obj
 	p.channels[channelId] = NewChannel(channelId, nil)
+	p.channels[channelId].peers[clientPeer.peerID.String()] = clientPeer
 
 	// Add request to request list
 	p.requests[req.MessageData.Id] = NewRequest()
@@ -1009,11 +1067,11 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	req := &p2p.ClientLeaveChannel{
 		MessageData: p.node.NewMessageData(uuid.New().String(), false),
 		ClientData: &p2p.ClientData{
-			PeerId:   clientPeer.peerId,
+			PeerId:   []byte(string(clientPeer.peerID)),
 			Username: clientPeer.username},
 		HostData: &p2p.HostData{
 			ChannelId: channelId,
-			PeerId:    hostPeerID.String()}}
+			PeerId:    []byte(string(hostPeerID))}}
 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
@@ -1057,11 +1115,11 @@ func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.I
 	req := &p2p.ClientTransmissionEnd{
 		MessageData: p.node.NewMessageData(uuid.New().String(), false),
 		ClientData: &p2p.ClientData{
-			PeerId:   clientPeer.peerId,
+			PeerId:   []byte(string(clientPeer.peerID)),
 			Username: clientPeer.username},
 		HostData: &p2p.HostData{
 			ChannelId: channelId,
-			PeerId:    hostPeerID.String()}}
+			PeerId:    []byte(string(hostPeerID))}}
 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
