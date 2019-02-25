@@ -135,6 +135,19 @@ const (
 	ClientSendMessage
 )
 
+// Protocol Error States
+type ProtocolErrorState int32
+
+const (
+	NoError           ProtocolErrorState = 100
+	GenericError      ProtocolErrorState = 200
+	MessageLimitError ProtocolErrorState = 210
+	TimeLimitError    ProtocolErrorState = 220
+	CooldownError     ProtocolErrorState = 230
+	HistoryError      ProtocolErrorState = 240
+	RatioError        ProtocolErrorState = 250
+)
+
 // MultilogueProtocol type
 type MultilogueProtocol struct {
 	node     *Node               // local host
@@ -204,6 +217,8 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	// Protocol Logic
 	accepted := false
 
+	errorCode := GenericError
+
 	var currentChannelClient string
 	var givenChannelClient string
 	var remoteRequester string
@@ -231,12 +246,12 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	if !(currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester) {
 		p.debugPrintln("In onClientSendMessage: Denied because transmisison peer id, given peer id and remote peer id are not equal.")
 		p.debugPrintln(currentChannelClient, " ", givenChannelClient, " ", remoteRequester)
-
 		goto Response
 	}
 
 	if channel.currentTransmission.totalMsgs+1 > channel.config.MessageLimit {
 		p.debugPrintln("In onClientSendMessage: Denied because meessage limit reached.")
+		errorCode = MessageLimitError
 		goto Response
 	}
 
@@ -244,6 +259,13 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	messageRatio = float64(channel.currentTransmission.totalMsgs) / sessionLength.Seconds()
 	if messageRatio > channel.config.MaxMessageRatio {
 		p.debugPrintln("In onClientSendMessage: Denied because message ratio passed.")
+		errorCode = RatioError
+		goto Response
+	}
+
+	if channel.currentTransmission.timeEnded {
+		p.debugPrintln("In onClientSendMessage: Denied time limit for transmission passed.")
+		errorCode = TimeLimitError
 		goto Response
 	}
 
@@ -300,7 +322,8 @@ Response:
 
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
-			HostData:   data.HostData}
+			HostData:   data.HostData,
+			ErrorCode:  int32(errorCode)}
 
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
@@ -352,6 +375,8 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		log.Println("Failed to obtain Client Peer ID")
 		return
 	}
+
+	errorCode := GenericError
 
 	// Protocol Logic
 	accepted := true
@@ -440,7 +465,8 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	} else {
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
-			HostData:   data.HostData}
+			HostData:   data.HostData,
+			ErrorCode:  int32(errorCode)}
 
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
