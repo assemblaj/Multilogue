@@ -82,7 +82,7 @@ func TestJoinChannel(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	var host2Notified bool
+	var host2Notified *Response
 
 	_, channelExists := host2.channels["test"]
 	if !channelExists {
@@ -93,14 +93,13 @@ func TestJoinChannel(t *testing.T) {
 	case host2Notified = <-req.success:
 		break
 	case <-time.After(1 * time.Second):
-		host2Notified = false
 		break
 	}
 
 	_, host1AddedChannel := host1.channels["test"].peers[host2IDString]
 
-	if !host1AddedChannel || !host2Notified {
-		t.Errorf("Failed to join channel. host1AddedChannel: %t host2Notified: %t ", host1AddedChannel, host2Notified)
+	if !host1AddedChannel || host2Notified == nil {
+		t.Errorf("Failed to join channel. host1AddedChannel: %t host2Notified: %d ", host1AddedChannel, host2Notified.errorCode)
 	}
 }
 
@@ -324,7 +323,7 @@ func TestHistory(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	transmissionDenied := false
+	var transmissionDenied *Response
 
 	select {
 	case <-req.success:
@@ -362,7 +361,7 @@ func TestHistory(t *testing.T) {
 		break
 	}
 
-	if !transmissionDenied {
+	if transmissionDenied == nil || transmissionDenied.errorCode != HistoryError {
 		t.Errorf("Host2 transmission was not denied upon violating history. ")
 	}
 
@@ -379,7 +378,7 @@ func TestCooldown(t *testing.T) {
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 	config := DefaultChannelConfig()
 	config.HistorySize = 0
-	config.CooldownPeriod = 80
+	config.CooldownPeriod = 8
 
 	host1.CreateChannel("test", config)
 
@@ -389,7 +388,7 @@ func TestCooldown(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	transmissionDenied := false
+	var transmissionDenied *Response
 
 	select {
 	case <-req.success:
@@ -427,8 +426,8 @@ func TestCooldown(t *testing.T) {
 		break
 	}
 
-	if !transmissionDenied {
-		t.Errorf("Host2 transmission was not denied upon violating cooldown. ")
+	if transmissionDenied == nil || transmissionDenied.errorCode != CooldownError {
+		t.Errorf("Host2 transmission was not denied upon violating cooldown.  ")
 	}
 
 }
@@ -454,7 +453,7 @@ func TestMessageLimit(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	messageLimitFailed := false
+	var messageLimitFailed *Response
 
 	select {
 	case <-req.success:
@@ -469,8 +468,7 @@ func TestMessageLimit(t *testing.T) {
 			}
 			req3, _ := host2.SendMessage(host2Peer, host1.ID(), "test", "Hello World!")
 			select {
-			case <-req3.fail:
-				messageLimitFailed = true
+			case messageLimitFailed = <-req3.fail:
 				break
 			case <-time.After(3 * time.Second):
 				break
@@ -484,7 +482,7 @@ func TestMessageLimit(t *testing.T) {
 		break
 	}
 
-	if !messageLimitFailed {
+	if messageLimitFailed == nil || messageLimitFailed.errorCode != MessageLimitError {
 		t.Errorf("Host limit did not deny. ")
 	}
 
@@ -512,7 +510,7 @@ func TestTimeLimit(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	timeLimitDeny := false
+	var timeLimitDeny *Response
 
 	select {
 	case <-req.success:
@@ -525,8 +523,7 @@ func TestTimeLimit(t *testing.T) {
 		// Just testing if the request was recieved at all. Ideally it should be
 		// accepted in this scenario (first user starting transmisison), but
 		// that's not what we're testing
-		case <-req3.fail:
-			timeLimitDeny = true
+		case timeLimitDeny = <-req3.fail:
 			break
 		}
 		break
@@ -534,7 +531,7 @@ func TestTimeLimit(t *testing.T) {
 		break
 	}
 
-	if !timeLimitDeny {
+	if timeLimitDeny == nil || timeLimitDeny.errorCode != TimeLimitError {
 		t.Errorf("Message was not denied after time limit . ")
 	}
 
@@ -561,7 +558,7 @@ func TestRatioLimit(t *testing.T) {
 
 	req, _ := host2.JoinChannel(host2Peer, host1.ID(), "test")
 
-	ratioLimitFailed := false
+	var ratioLimitFailed *Response
 
 	select {
 	case <-req.success:
@@ -576,8 +573,7 @@ func TestRatioLimit(t *testing.T) {
 			}
 			req3, _ := host2.SendMessage(host2Peer, host1.ID(), "test", "Hello World!")
 			select {
-			case <-req3.fail:
-				ratioLimitFailed = true
+			case ratioLimitFailed = <-req3.fail:
 				break
 			case <-time.After(3 * time.Second):
 				break
@@ -591,7 +587,7 @@ func TestRatioLimit(t *testing.T) {
 		break
 	}
 
-	if !ratioLimitFailed {
+	if ratioLimitFailed == nil || ratioLimitFailed.errorCode != RatioError {
 		t.Errorf("Ratio limit did not deny. ")
 	}
 

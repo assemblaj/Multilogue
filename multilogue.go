@@ -114,27 +114,6 @@ func NewChannel(channelId string, config *ChannelConfig) *Channel {
 	return c
 }
 
-type Request struct {
-	success chan bool
-	fail    chan bool
-}
-
-func NewRequest() *Request {
-	return &Request{
-		success: make(chan bool),
-		fail:    make(chan bool)}
-}
-
-// Protocol state enum
-type ProtocolState int
-
-const (
-	HostRequestWait ProtocolState = iota
-	HostMessageWait
-	ClientAcceptWait
-	ClientSendMessage
-)
-
 // Protocol Error States
 type ProtocolErrorState int32
 
@@ -146,6 +125,37 @@ const (
 	CooldownError     ProtocolErrorState = 230
 	HistoryError      ProtocolErrorState = 240
 	RatioError        ProtocolErrorState = 250
+)
+
+// Prorbably want useful statistics in this eventually too
+type Response struct {
+	errorCode ProtocolErrorState
+}
+
+func NewResponse(errorCode ProtocolErrorState) *Response {
+	return &Response{
+		errorCode: errorCode}
+}
+
+type Request struct {
+	success chan *Response
+	fail    chan *Response
+}
+
+func NewRequest() *Request {
+	return &Request{
+		success: make(chan *Response),
+		fail:    make(chan *Response)}
+}
+
+// Protocol state enum
+type ProtocolState int
+
+const (
+	HostRequestWait ProtocolState = iota
+	HostMessageWait
+	ClientAcceptWait
+	ClientSendMessage
 )
 
 // MultilogueProtocol type
@@ -317,8 +327,7 @@ Response:
 			}
 		}
 	} else {
-		peer := channel.peers[clientPeerIDString]
-		peer.lastTransmission = time.Now()
+		//peer := channel.peers[clientPeerIDString]
 
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
@@ -391,24 +400,34 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		}
 
 		// If its in the last X transmissions
-		var currentHistory []string
-		end := len(channel.history)
-		start := end - channel.config.HistorySize
+		if channel.config.HistorySize > 0 { // last 0 would equal the entire array
+			var currentHistory []string
+			end := len(channel.history)
+			start := end - channel.config.HistorySize
 
-		if start < 9 {
-			currentHistory = channel.history[0:end]
-		} else {
-			currentHistory = channel.history[start:end]
-		}
+			if start < 0 {
+				currentHistory = channel.history[0:end]
+			} else {
+				currentHistory = channel.history[start:end]
+			}
 
-		for _, peerID := range currentHistory {
-			if clientPeerIDString == peerID {
-				accepted = false
+			for _, peerID := range currentHistory {
+				if clientPeerIDString == peerID {
+					accepted = false
+					errorCode = HistoryError
+				}
 			}
 		}
 
-		if time.Now().Sub(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
-			accepted = false
+		if !peer.lastTransmission.IsZero() {
+			p.debugPrintln("In onClientTransmissionStart, Debugging cooldown ")
+			p.debugPrintln("Time since last transmission: ", time.Since(peer.lastTransmission))
+			p.debugPrintln("Cool down period: ", time.Duration(channel.config.CooldownPeriod)*time.Second)
+			if time.Since(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
+				p.debugPrintln("Transmission denied, sent within cooldown period.")
+				accepted = false
+				errorCode = CooldownError
+			}
 		}
 	} else {
 		accepted = false
@@ -422,6 +441,9 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	if accepted {
 		channel.history = append(channel.history, clientPeerIDString)
 		peer := channel.peers[clientPeerIDString]
+
+		peer.lastTransmission = time.Now()
+
 		// Create new transmission
 		channel.currentTransmission = &Transmission{
 			channelId: data.HostData.ChannelId,
@@ -745,19 +767,19 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 
 	if !channelExists {
 		p.debugPrintln("In onHostAcceptTransmission: Denied because channel doesn't exist")
-		request.fail <- true
+		request.fail <- NewResponse(GenericError)
 		return
 	}
 
 	_, hasPeer := channel.peers[clientPeerIDString]
 	if !hasPeer {
 		p.debugPrintln("In onHostAcceptTransmission: Denied because peer doesn't exist: ", data.ClientData.PeerId)
-		request.fail <- true
+		request.fail <- NewResponse(GenericError)
 		return
 	}
 	p.debugPrintln("In onHostAcceptTransmission: Success")
 
-	request.success <- true
+	request.success <- NewResponse(NoError)
 
 	// remove request from map as we have processed it here
 	if channel.currentTransmission == nil {
@@ -809,13 +831,13 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 
 	channel, channelExists := p.channels[data.HostData.ChannelId]
 	if !channelExists {
-		request.fail <- true
+		request.fail <- NewResponse(GenericError)
 		return
 	}
 
 	_, hasPeer := channel.peers[clientPeerIDString]
 	if !hasPeer {
-		request.fail <- true
+		request.fail <- NewResponse(GenericError)
 		return
 	}
 
@@ -871,7 +893,7 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		_, hasPeer := channel.peers[clientPeerIDString]
 		if hasPeer {
 			if clientPeerId == clientPeerIDString {
-				request.success <- true
+				request.success <- NewResponse(NoError)
 			}
 			if channel.output == nil {
 				channel.output = NewOutputSession(1) //TODO: Replace with some default/config
@@ -912,9 +934,9 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 	// Update request data
 	if requestExists {
 		if channelExists {
-			request.success <- true
+			request.success <- NewResponse(NoError)
 		} else {
-			request.fail <- true
+			request.fail <- NewResponse(GenericError)
 		}
 	} else {
 		log.Println("Failed to locate request data boject for response")
@@ -950,7 +972,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 	}
 
 	// Update request data
-	request.fail <- true
+	request.fail <- NewResponse(ProtocolErrorState(data.ErrorCode))
 
 	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
