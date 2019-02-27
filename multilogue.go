@@ -39,18 +39,6 @@ type Peer struct {
 	lastTransmission time.Time // unix timestamp of last transmission
 }
 
-type JoinState struct {
-	accepted chan bool
-	denied   chan bool
-}
-
-func NewJoinState() *JoinState {
-	es := new(JoinState)
-	es.accepted = make(chan bool)
-	es.denied = make(chan bool)
-	return es
-}
-
 type InputSession struct {
 	start   chan bool
 	stop    chan bool
@@ -94,7 +82,6 @@ type Channel struct {
 	currentTransmission *Transmission
 	output              *OutputSession
 	input               *InputSession
-	join                *JoinState
 	config              *ChannelConfig
 }
 
@@ -109,7 +96,6 @@ func NewChannel(channelId string, config *ChannelConfig) *Channel {
 		peers:     make(map[string]*Peer),
 		output:    NewOutputSession(1), //TODO: Replace with some default/config
 		input:     NewInputSession(),
-		join:      NewJoinState(),
 		config:    config}
 	return c
 }
@@ -147,16 +133,6 @@ func NewRequest() *Request {
 		success: make(chan *Response),
 		fail:    make(chan *Response)}
 }
-
-// Protocol state enum
-type ProtocolState int
-
-const (
-	HostRequestWait ProtocolState = iota
-	HostMessageWait
-	ClientAcceptWait
-	ClientSendMessage
-)
 
 // MultilogueProtocol type
 type MultilogueProtocol struct {
