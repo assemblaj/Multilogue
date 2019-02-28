@@ -44,7 +44,7 @@ func TestCreateChannel(t *testing.T) {
 
 	host.CreateChannel("test", DefaultChannelConfig())
 
-	_, exists := host.channels["test"]
+	_, exists := host.channels.Get("test")
 	if !exists {
 		t.Errorf("CreateChannel failed to create channel.")
 	}
@@ -56,7 +56,7 @@ func TestDeleteChannel(t *testing.T) {
 	host.CreateChannel("test", DefaultChannelConfig())
 	host.DeleteChannel("test")
 
-	_, exists := host.channels["test"]
+	_, exists := host.channels.Get("test")
 	if exists {
 		t.Errorf("DeleteChannel failed to delete channel.")
 	}
@@ -84,7 +84,7 @@ func TestJoinChannel(t *testing.T) {
 
 	var host2Notified *Response
 
-	_, channelExists := host2.channels["test"]
+	_, channelExists := host2.channels.Get("test")
 	if !channelExists {
 		t.Errorf("Test channel was not added to chanel 2 ")
 	}
@@ -96,7 +96,9 @@ func TestJoinChannel(t *testing.T) {
 		break
 	}
 
-	_, host1AddedChannel := host1.channels["test"].peers[host2IDString]
+	val, _ := host1.channels.Get("test")
+	channel := val.(*Channel)
+	_, host1AddedChannel := channel.peers.Get(host2IDString)
 
 	if !host1AddedChannel || host2Notified == nil {
 		t.Errorf("Failed to join channel. host1AddedChannel: %t host2Notified: %d ", host1AddedChannel, host2Notified.errorCode)
@@ -132,9 +134,10 @@ func TestLeaveChannel(t *testing.T) {
 	}
 
 	<-time.After(2 * time.Second)
-	channel := host1.channels["test"]
+	val, _ := host1.channels.Get("test")
+	channel := val.(*Channel)
 
-	_, peerExists := channel.peers[host2IDString]
+	_, peerExists := channel.peers.Get(host2IDString)
 	if peerExists {
 		t.Errorf("Host2 was not remove from channel. ")
 	}
@@ -213,6 +216,8 @@ func TestSendMessage(t *testing.T) {
 	select {
 	case <-req.success:
 		req2, _ := host2.SendTransmissionRequest(host2Peer, host1.ID(), "test")
+		val, _ := host2.channels.Get("test")
+		channel := val.(*Channel)
 		select {
 		// Just testing if the request was recieved at all. Ideally it should be
 		// accepted in this scenario (first user starting transmisison), but
@@ -223,7 +228,7 @@ func TestSendMessage(t *testing.T) {
 			case <-req3.success:
 				messageRecieved = true
 				break
-			case <-host1.channels["test"].output.messageQueue:
+			case <-channel.output.messageQueue:
 				messageRecieved = true
 				break
 			case <-time.After(3 * time.Second):
@@ -273,14 +278,19 @@ func TestEndTransmission(t *testing.T) {
 		// that's not what we're testing
 		case <-req2.success:
 			req3, _ := host2.SendMessage(host2Peer, host1.ID(), "test", "Hello World!")
+			val, _ := host1.channels.Get("test")
+			channel := val.(*Channel)
+
 			select {
 			case <-req3.success:
 				host2.EndTransmission(host2Peer, host1.ID(), "test")
 				select {
 				case <-time.After(3 * time.Second):
-					if host1.channels["test"].currentTransmission == nil {
+					channel.RLock()
+					if channel.currentTransmission == nil {
 						transmissionEnded = true
 					}
+					channel.RUnlock()
 					break
 				}
 				break

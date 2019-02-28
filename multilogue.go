@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"log"
+	"reflect"
+	"sync"
 	"time"
 
 	p2p "github.com/assemblaj/Multilogue/pb"
@@ -39,6 +41,48 @@ type Peer struct {
 	lastTransmission time.Time // unix timestamp of last transmission
 }
 
+type SyncedMap struct {
+	lock      sync.RWMutex
+	values    map[string]interface{}
+	valueType reflect.Type
+}
+
+func newSyncedMap(v interface{}) *SyncedMap {
+	return &SyncedMap{
+		values:    make(map[string]interface{}),
+		valueType: reflect.TypeOf(v)}
+}
+
+func (t *SyncedMap) Get(key string) (interface{}, bool) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+	value, found := t.values[key]
+	return value, found
+}
+func (t *SyncedMap) Delete(key string) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	delete(t.values, key)
+}
+
+func (t *SyncedMap) Put(key string, value interface{}) {
+	if reflect.TypeOf(value) == t.valueType {
+		t.lock.Lock()
+		defer t.lock.Unlock()
+		t.values[key] = value
+	}
+}
+
+func (t *SyncedMap) Range(f func(key, value interface{})) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+	for k, v := range t.values {
+		t.lock.RUnlock()
+		f(k, v)
+		t.lock.RLock()
+	}
+}
+
 type InputSession struct {
 	start   chan bool
 	stop    chan bool
@@ -72,17 +116,19 @@ type Transmission struct {
 	startTime time.Time
 	done      chan bool // notifies timer when transmission is ended
 	timeEnded bool
+	sync.RWMutex
 }
 
 type Channel struct {
 	channelId string
-	history   []string         // peer Ids of users who last spoke
-	peers     map[string]*Peer // slice of peer objects
+	history   []string   // peer Ids of users who last spoke
+	peers     *SyncedMap // slice of peer objects
 	// probably need a map of peerId to cooldown
 	currentTransmission *Transmission
 	output              *OutputSession
 	input               *InputSession
 	config              *ChannelConfig
+	sync.RWMutex
 }
 
 func NewChannel(channelId string, config *ChannelConfig) *Channel {
@@ -93,7 +139,7 @@ func NewChannel(channelId string, config *ChannelConfig) *Channel {
 	c := &Channel{
 		channelId: channelId,
 		history:   []string{},
-		peers:     make(map[string]*Peer),
+		peers:     newSyncedMap(&Peer{}),
 		output:    NewOutputSession(1), //TODO: Replace with some default/config
 		input:     NewInputSession(),
 		config:    config}
@@ -136,9 +182,9 @@ func NewRequest() *Request {
 
 // MultilogueProtocol type
 type MultilogueProtocol struct {
-	node     *Node               // local host
-	channels map[string]*Channel // channelId : *Channel
-	requests map[string]*Request // used to access request data from response handlers
+	node     *Node      // local host
+	channels *SyncedMap // channelId : *Channel
+	requests *SyncedMap // used to access request data from response handlers
 	debug    bool
 }
 
@@ -147,8 +193,8 @@ type MultilogueProtocol struct {
 func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	p := &MultilogueProtocol{
 		node:     node,
-		channels: make(map[string]*Channel),
-		requests: make(map[string]*Request),
+		channels: newSyncedMap(&Channel{}),
+		requests: newSyncedMap(&Request{}),
 		debug:    true}
 
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
@@ -204,6 +250,8 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	accepted := false
 
 	errorCode := GenericError
+	var hasPeer bool
+	var channel *Channel
 
 	var currentChannelClient string
 	var givenChannelClient string
@@ -211,13 +259,20 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	var sessionLength time.Duration
 	var messageRatio float64
 
-	channel, exists := p.channels[data.HostData.ChannelId]
+	value, exists := p.channels.Get(data.HostData.ChannelId)
+
 	if !exists {
-		_, hasPeer := channel.peers[clientPeerIDString]
-		if !hasPeer {
-			p.debugPrintln("In onClientSendMessage: Denied because peer not found.")
-			goto Response
-		}
+		p.debugPrintln("In onClientSendMessage: Denied because channel not found.")
+		goto Response
+	}
+
+	channel = value.(*Channel)
+
+	channel.currentTransmission.RLock()
+	_, hasPeer = channel.peers.Get(clientPeerIDString)
+	if !hasPeer {
+		p.debugPrintln("In onClientSendMessage: Denied because peer not found.")
+		goto Response
 	}
 
 	if channel.currentTransmission == nil {
@@ -254,6 +309,7 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 		errorCode = TimeLimitError
 		goto Response
 	}
+	channel.currentTransmission.RUnlock()
 
 	accepted = true
 
@@ -266,9 +322,15 @@ Response:
 
 	if accepted {
 		// Updating increment messages
+		channel.currentTransmission.Lock()
 		channel.currentTransmission.totalMsgs = channel.currentTransmission.totalMsgs + 1
+		channel.currentTransmission.Unlock()
 
-		for peerID, currentPeer := range channel.peers {
+		//for peerID, currentPeer := range channel.peers {
+		channel.peers.Range(func(key, value interface{}) {
+			peerID := key
+			currentPeer := value.(*Peer)
+
 			resp = &p2p.HostBroadcastMessage{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 				ClientData: data.ClientData,
 				HostData:   data.HostData,
@@ -301,7 +363,7 @@ Response:
 			if ok {
 				log.Printf("%s: Message from %s recieved.", s.Conn().LocalPeer().String(), peerID)
 			}
-		}
+		})
 	} else {
 		//peer := channel.peers[clientPeerIDString]
 
@@ -365,12 +427,21 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 	// Protocol Logic
 	accepted := true
-	channel, exists := p.channels[data.HostData.ChannelId]
+	var channel *Channel
+
+	value, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
-		peer, hasPeer := channel.peers[clientPeerIDString]
+		channel = value.(*Channel)
+
+		value, hasPeer := channel.peers.Get(clientPeerIDString)
+		var peer *Peer
+
 		if !hasPeer {
 			accepted = false
+		} else {
+			peer = value.(*Peer)
 		}
+
 		if channel.currentTransmission != nil {
 			accepted = false
 		}
@@ -416,7 +487,8 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 	if accepted {
 		channel.history = append(channel.history, clientPeerIDString)
-		peer := channel.peers[clientPeerIDString]
+		value, _ := channel.peers.Get(clientPeerIDString)
+		peer := value.(*Peer)
 
 		peer.lastTransmission = time.Now()
 
@@ -437,7 +509,9 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 				log.Println("timer returning, transmission done")
 				return
 			case <-transmissionTimer.C:
+				channel.currentTransmission.Lock()
 				channel.currentTransmission.timeEnded = true
+				channel.currentTransmission.Unlock()
 			}
 		}()
 
@@ -522,20 +596,24 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 
 	// Protocol Logic
 	// Leaving channel
-	channel, exists := p.channels[data.HostData.ChannelId]
+	val, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
+		channel := val.(*Channel)
 		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[clientPeerIDString]
+		_, hasPeer := channel.peers.Get(clientPeerIDString)
 		if hasPeer {
 			currentChannelClient := channel.currentTransmission.peer.peerID.String()
 			givenChannelClient := clientPeerIDString
 			remoteRequester := s.Conn().RemotePeer().String()
 			if currentChannelClient == givenChannelClient && currentChannelClient == remoteRequester {
+				channel.currentTransmission.Lock()
 				channel.currentTransmission.done <- true
+				channel.currentTransmission.Unlock()
 
 				log.Println("timer returned, making current transmisison nil ")
-
+				channel.Lock()
 				channel.currentTransmission = nil
+				channel.Unlock()
 				log.Println(" current transmisison nil ", channel.currentTransmission)
 
 			} else {
@@ -583,23 +661,27 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 	// Protocol Logic
 	// Adding to channel
 	accepted := false
-	channel, exists := p.channels[data.HostData.ChannelId]
+	val, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
+		channel := val.(*Channel)
 		// Accept if the peerId and username aren't already in the channel
-		_, hasPeer := channel.peers[clientPeerIDString]
+		_, hasPeer := channel.peers.Get(clientPeerIDString)
 		if !hasPeer {
 			accepted = true
-			for _, peer := range channel.peers {
+			channel.peers.Range(func(key, value interface{}) {
+				peer := value.(*Peer)
+
+				//for _, peer := range channel.peers {
 				if data.ClientData.Username == peer.username {
 					accepted = false
 				}
-			}
+			})
 		}
 		if accepted {
-			channel.peers[clientPeerIDString] = &Peer{
+			channel.peers.Put(clientPeerIDString, &Peer{
 				peerID:   clientPeerID,
 				username: data.ClientData.Username,
-			}
+			})
 		}
 	}
 
@@ -689,12 +771,13 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 
 	// Protocol Logic
 	// Leaving channel
-	channel, exists := p.channels[data.HostData.ChannelId]
+	val, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
+		channel := val.(*Channel)
 		// remove request from map as we have processed it here
-		_, hasPeer := channel.peers[clientPeerIDString]
+		_, hasPeer := channel.peers.Get(clientPeerIDString)
 		if hasPeer {
-			delete(channel.peers, clientPeerIDString)
+			channel.peers.Delete(clientPeerIDString)
 		}
 	}
 
@@ -731,23 +814,25 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	}
 
 	// If there's no request, then simply print an error and return
-	request, requestExists := p.requests[data.MessageData.Id]
+	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
 		log.Println("Request not found ")
 		return
 	}
+	request := val.(*Request)
 
 	// Protocol Logic
 	// Leaving channel
-	channel, channelExists := p.channels[data.HostData.ChannelId]
+	val, channelExists := p.channels.Get(data.HostData.ChannelId)
 
 	if !channelExists {
 		p.debugPrintln("In onHostAcceptTransmission: Denied because channel doesn't exist")
 		request.fail <- NewResponse(GenericError)
 		return
 	}
+	channel := val.(*Channel)
 
-	_, hasPeer := channel.peers[clientPeerIDString]
+	_, hasPeer := channel.peers.Get(clientPeerIDString)
 	if !hasPeer {
 		p.debugPrintln("In onHostAcceptTransmission: Denied because peer doesn't exist: ", data.ClientData.PeerId)
 		request.fail <- NewResponse(GenericError)
@@ -799,19 +884,21 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 	}
 
 	// If there's no request, then simply print an error and return
-	request, requestExists := p.requests[data.MessageData.Id]
+	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
 		log.Println("Request not found ")
 		return
 	}
+	request := val.(*Request)
 
-	channel, channelExists := p.channels[data.HostData.ChannelId]
+	val, channelExists := p.channels.Get(data.HostData.ChannelId)
 	if !channelExists {
 		request.fail <- NewResponse(GenericError)
 		return
 	}
+	channel := val.(*Channel)
 
-	_, hasPeer := channel.peers[clientPeerIDString]
+	_, hasPeer := channel.peers.Get(clientPeerIDString)
 	if !hasPeer {
 		request.fail <- NewResponse(GenericError)
 		return
@@ -822,8 +909,8 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 
 	// After UI has acknowledged the above message, delete the channel
 	channel.input.stop <- true
-	delete(p.channels, data.HostData.ChannelId)
 
+	p.channels.Delete(data.HostData.ChannelId)
 	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
@@ -857,16 +944,19 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		return
 	}
 
-	request, requestExists := p.requests[data.MessageData.Id]
+	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
 		log.Println("Request not found ")
 		return
 	}
+	request := val.(*Request)
+
 	// Protocol Logic
 	// Leaving channel
-	channel, exists := p.channels[data.HostData.ChannelId]
+	value, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
-		_, hasPeer := channel.peers[clientPeerIDString]
+		channel := value.(*Channel)
+		_, hasPeer := channel.peers.Get(clientPeerIDString)
 		if hasPeer {
 			if clientPeerId == clientPeerIDString {
 				request.success <- NewResponse(NoError)
@@ -904,11 +994,12 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 		return
 	}
 
-	_, channelExists := p.channels[data.HostData.ChannelId]
-	request, requestExists := p.requests[data.MessageData.Id]
+	_, channelExists := p.channels.Get(data.HostData.ChannelId)
+	value, requestExists := p.requests.Get(data.MessageData.Id)
 
 	// Update request data
 	if requestExists {
+		request := value.(*Request)
 		if channelExists {
 			request.success <- NewResponse(NoError)
 		} else {
@@ -941,7 +1032,8 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 		return
 	}
 	// If there's no request, then simply print an error and return
-	request, requestExists := p.requests[data.MessageData.Id]
+	value, requestExists := p.requests.Get(data.MessageData.Id)
+	request := value.(*Request)
 	if !requestExists {
 		log.Println("Request not found ")
 		return
@@ -992,8 +1084,10 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	}
 
 	// Add request to request list
-	p.requests[req.MessageData.Id] = NewRequest()
-	return p.requests[req.MessageData.Id], true
+	request := NewRequest()
+	p.requests.Put(req.MessageData.Id, request)
+
+	return request, true
 }
 
 func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
@@ -1032,25 +1126,26 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 	}
 
 	// Add request to request list
-	p.requests[req.MessageData.Id] = NewRequest()
+	request := NewRequest()
+	p.requests.Put(req.MessageData.Id, request)
 
-	return p.requests[req.MessageData.Id], true
+	return request, true
 
 }
 
 func (p *MultilogueProtocol) CreateChannel(channelId string, config *ChannelConfig) {
 	// Creating Channel Obj
-	_, exists := p.channels[channelId]
+	_, exists := p.channels.Get(channelId)
 	// remove the channel
 	if !exists {
-		p.channels[channelId] = NewChannel(channelId, config)
+		p.channels.Put(channelId, NewChannel(channelId, config))
 	}
 }
 
 func (p *MultilogueProtocol) DeleteChannel(channelId string) {
-	_, exists := p.channels[channelId]
+	_, exists := p.channels.Get(channelId)
 	if exists {
-		delete(p.channels, channelId)
+		p.channels.Delete(channelId)
 	}
 }
 
@@ -1090,13 +1185,15 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	}
 
 	// Creating Channel Obj
-	p.channels[channelId] = NewChannel(channelId, nil)
-	p.channels[channelId].peers[clientPeer.peerID.String()] = clientPeer
+	channel := NewChannel(channelId, nil)
+	channel.peers.Put(clientPeer.peerID.String(), clientPeer)
+	p.channels.Put(channelId, channel)
 
 	// Add request to request list
-	p.requests[req.MessageData.Id] = NewRequest()
+	request := NewRequest()
+	p.requests.Put(req.MessageData.Id, request)
 
-	return p.requests[req.MessageData.Id], true
+	return request, true
 }
 
 func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
@@ -1135,16 +1232,17 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	}
 
 	// Protocol logic
-	_, exists := p.channels[channelId]
+	_, exists := p.channels.Get(channelId)
 	// remove the channel
 	if exists {
-		delete(p.channels, channelId)
+		p.channels.Delete(channelId)
 	}
 
 	// Add request to request list
-	p.requests[req.MessageData.Id] = NewRequest()
+	request := NewRequest()
+	p.requests.Put(req.MessageData.Id, request)
 
-	return p.requests[req.MessageData.Id], true
+	return request, true
 }
 
 func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
@@ -1183,6 +1281,8 @@ func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.I
 	}
 
 	// Add request to request list
-	p.requests[req.MessageData.Id] = NewRequest()
-	return p.requests[req.MessageData.Id], true
+	request := NewRequest()
+	p.requests.Put(req.MessageData.Id, request)
+
+	return request, true
 }
