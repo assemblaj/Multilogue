@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"strings"
+	"time"
 
 	maddr "github.com/multiformats/go-multiaddr"
 )
@@ -56,10 +57,14 @@ func StringsToAddrs(addrStrings []string) (maddrs []maddr.Multiaddr, err error) 
 }
 
 type Config struct {
-	RendezvousString string
-	BootstrapPeers   addrList
-	ListenAddresses  addrList
-	ProtocolID       string
+	RendezvousString  string
+	BootstrapPeers    addrList
+	ListenAddresses   addrList
+	ProtocolID        string
+	HostPeerID        string
+	ChannelConfigFile string
+	ChannelName       string
+	Username          string
 }
 
 type ChannelConfig struct {
@@ -77,6 +82,11 @@ func ParseFlags() (Config, error) {
 	flag.Var(&config.BootstrapPeers, "peer", "Adds a peer multiaddress to the bootstrap list")
 	flag.Var(&config.ListenAddresses, "listen", "Adds a multiaddress to the listen list")
 	flag.StringVar(&config.ProtocolID, "pid", "/chat/1.1.0", "Sets a protocol id for stream headers")
+	flag.StringVar(&config.HostPeerID, "host", "", "Peer ID of host")
+	flag.StringVar(&config.ChannelName, "channel", "", "Name of channel to be joined.")
+	flag.StringVar(&config.ChannelConfigFile, "config", "", "Channel config file.")
+	flag.StringVar(&config.Username, "user", time.Now().String(), "Username.")
+
 	flag.Parse()
 
 	if len(config.BootstrapPeers) == 0 {
