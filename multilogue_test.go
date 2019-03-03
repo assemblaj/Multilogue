@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
-	ps "github.com/libp2p/go-libp2p-peerstore"
-
 	libp2p "github.com/libp2p/go-libp2p"
 	crypto "github.com/libp2p/go-libp2p-crypto"
+	ps "github.com/libp2p/go-libp2p-peerstore"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -42,7 +41,7 @@ func makeTestNode() *Node {
 func TestCreateChannel(t *testing.T) {
 	host := makeTestNode()
 
-	host.CreateChannel("test", DefaultChannelConfig())
+	host.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	_, exists := host.channels.Get("test")
 	if !exists {
@@ -53,7 +52,7 @@ func TestCreateChannel(t *testing.T) {
 func TestDeleteChannel(t *testing.T) {
 	host := makeTestNode()
 
-	host.CreateChannel("test", DefaultChannelConfig())
+	host.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 	host.DeleteChannel("test")
 
 	_, exists := host.channels.Get("test")
@@ -72,7 +71,7 @@ func TestJoinChannel(t *testing.T) {
 	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	host2IDString := host2.ID().String()
 
@@ -115,7 +114,7 @@ func TestLeaveChannel(t *testing.T) {
 	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	host2IDString := host2.ID().String()
 
@@ -154,7 +153,7 @@ func TestReqestTransmission(t *testing.T) {
 	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	//host2IDString := host2.ID().String()
 
@@ -203,7 +202,7 @@ func TestSendMessage(t *testing.T) {
 	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),
@@ -259,7 +258,7 @@ func TestEndTransmission(t *testing.T) {
 	host1.Peerstore().AddAddrs(host2.ID(), host2.Addrs(), ps.PermanentAddrTTL)
 	host2.Peerstore().AddAddrs(host1.ID(), host1.Addrs(), ps.PermanentAddrTTL)
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),
@@ -325,7 +324,7 @@ func TestHistory(t *testing.T) {
 	config.HistorySize = 1
 	config.CooldownPeriod = 0
 
-	host1.CreateChannel("test", config)
+	host1.CreateChannel(&Peer{}, "test", config)
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),
@@ -390,7 +389,7 @@ func TestCooldown(t *testing.T) {
 	config.HistorySize = 0
 	config.CooldownPeriod = 8
 
-	host1.CreateChannel("test", config)
+	host1.CreateChannel(&Peer{}, "test", config)
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),
@@ -455,7 +454,7 @@ func TestMessageLimit(t *testing.T) {
 	config := DefaultChannelConfig()
 	config.MaxMessageRatio = 10000
 
-	host1.CreateChannel("test", config)
+	host1.CreateChannel(&Peer{}, "test", config)
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),
@@ -510,7 +509,7 @@ func TestTimeLimit(t *testing.T) {
 	config := DefaultChannelConfig()
 	config.TimeLimit = config.TimeLimit + 1
 
-	host1.CreateChannel("test", DefaultChannelConfig())
+	host1.CreateChannel(&Peer{}, "test", DefaultChannelConfig())
 
 	//host2IDString := host2.ID().String()
 
@@ -560,7 +559,7 @@ func TestRatioLimit(t *testing.T) {
 	config := DefaultChannelConfig()
 	config.MessageLimit = 10000
 
-	host1.CreateChannel("test", config)
+	host1.CreateChannel(&Peer{}, "test", config)
 
 	host2Peer := &Peer{
 		peerID:   host2.ID(),

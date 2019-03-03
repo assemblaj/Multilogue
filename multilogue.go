@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"log"
+	"os"
 	"reflect"
 	"sync"
 	"time"
@@ -39,6 +40,19 @@ type Peer struct {
 	username         string
 	lastMessage      time.Time // unix timestamp of last message
 	lastTransmission time.Time // unix timestamp of last transmission
+}
+
+type Message struct {
+	peer      *Peer
+	timestamp time.Time
+	text      string
+}
+
+func NewMessage(peer *Peer, message string) *Message {
+	return &Message{
+		peer:      peer,
+		timestamp: time.Now(),
+		text:      message}
 }
 
 type SyncedMap struct {
@@ -83,29 +97,15 @@ func (t *SyncedMap) Range(f func(key, value interface{})) {
 	}
 }
 
-type InputSession struct {
-	start   chan bool
-	stop    chan bool
-	current bool
-	total   int
-}
-
-func NewInputSession() *InputSession {
-	is := new(InputSession)
-	is.start = make(chan bool)
-	is.stop = make(chan bool)
-	return is
-}
-
 type OutputSession struct {
-	messageQueue chan string
+	messageQueue chan *Message
 	queueSize    int
 }
 
 func NewOutputSession(queueSize int) *OutputSession {
 	os := new(OutputSession)
 	os.queueSize = queueSize
-	os.messageQueue = make(chan string, os.queueSize)
+	os.messageQueue = make(chan *Message, os.queueSize)
 	return os
 }
 
@@ -126,7 +126,6 @@ type Channel struct {
 	// probably need a map of peerId to cooldown
 	currentTransmission *Transmission
 	output              *OutputSession
-	input               *InputSession
 	config              *ChannelConfig
 	sync.RWMutex
 }
@@ -141,7 +140,6 @@ func NewChannel(channelId string, config *ChannelConfig) *Channel {
 		history:   []string{},
 		peers:     newSyncedMap(&Peer{}),
 		output:    NewOutputSession(1), //TODO: Replace with some default/config
-		input:     NewInputSession(),
 		config:    config}
 	return c
 }
@@ -186,6 +184,7 @@ type MultilogueProtocol struct {
 	channels *SyncedMap // channelId : *Channel
 	requests *SyncedMap // used to access request data from response handlers
 	debug    bool
+	logger   *log.Logger
 }
 
 // NewMultilogueProtocol Create instance of protocol
@@ -195,7 +194,8 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 		node:     node,
 		channels: newSyncedMap(&Channel{}),
 		requests: newSyncedMap(&Request{}),
-		debug:    true}
+		debug:    true,
+		logger:   initDebugLogger()}
 
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
 	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
@@ -211,9 +211,22 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 	return p
 }
 
+func initDebugLogger() *log.Logger {
+	timeStirng := time.Now().Format("1-2_2006_15-04")
+
+	f, err := os.OpenFile("./log/log_"+timeStirng+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	//defer f.Close() // lets leave this to the os
+
+	logger := log.New(f, "Debug:", log.Lshortfile)
+	return logger
+}
+
 func (p *MultilogueProtocol) debugPrintln(v ...interface{}) {
 	if p.debug {
-		log.Println(v...)
+		p.logger.Println(v...)
 	}
 }
 
@@ -361,7 +374,7 @@ Response:
 			// send the response
 			ok := p.node.sendProtoMessage(resp, s)
 			if ok {
-				log.Printf("%s: Message from %s recieved.", s.Conn().LocalPeer().String(), peerID)
+				p.debugPrintln("%s: Message from %s recieved.", s.Conn().LocalPeer().String(), peerID)
 			}
 		})
 	} else {
@@ -392,7 +405,7 @@ Response:
 		// send the response
 		ok := p.node.sendProtoMessage(resp, s)
 		if ok {
-			log.Printf("%s: Denying Message from %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+			p.debugPrintln("%s: Denying Message from %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
 		}
 	}
 }
@@ -562,7 +575,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	ok := p.node.sendProtoMessage(resp, s)
 
 	if ok {
-		log.Printf("%s: Transmisison attempted from  %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+		p.debugPrintln("%s: Transmisison attempted from  %s.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
 	}
 
 }
@@ -578,7 +591,7 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) ending transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
+	p.debugPrintln("%s: User: %s (%s) ending transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -628,7 +641,7 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 
 	}
 
-	log.Printf("%s: User: %s (%s) ended transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
+	p.debugPrintln("%s: User: %s (%s) ended transmission. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer())
 
 }
 
@@ -737,7 +750,7 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 	ok := p.node.sendProtoMessage(resp, s)
 
 	if ok {
-		log.Printf("%s: Join Channel response to %s sent.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
+		p.debugPrintln("%s: Join Channel response to %s sent.", s.Conn().LocalPeer().String(), s.Conn().RemotePeer().String())
 	}
 
 }
@@ -753,7 +766,7 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Leaving Channel %s. (Client)", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Leaving Channel %s. (Client)", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -781,7 +794,7 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 		}
 	}
 
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -797,7 +810,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Transmission Accepted from host on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Transmission Accepted from host on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -845,15 +858,9 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	// remove request from map as we have processed it here
 	if channel.currentTransmission == nil {
 		channel.currentTransmission = &Transmission{}
-		channel.input = NewInputSession()
-		p.debugPrintln("In onHostAcceptTransmission: Input Session starting ")
-
-		// Alert the UI that the client is the speaker
-		channel.input.current = true
-		channel.input.start <- true
 	}
 
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -867,7 +874,7 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Transmision denied on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Transmision denied on channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -903,15 +910,10 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 		request.fail <- NewResponse(GenericError)
 		return
 	}
-
-	// Alert that input has been
-	channel.input.stop <- true
-
-	// After UI has acknowledged the above message, delete the channel
-	channel.input.stop <- true
+	request.fail <- NewResponse(ProtocolErrorState(data.ErrorCode))
 
 	p.channels.Delete(data.HostData.ChannelId)
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -928,7 +930,7 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 
 	clientPeerId := p.node.ID().String()
 
-	log.Printf("%s: User: %s (%s) Message being broadcasted on channel  %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Message being broadcasted on channel  %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -956,7 +958,8 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 	value, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
 		channel := value.(*Channel)
-		_, hasPeer := channel.peers.Get(clientPeerIDString)
+		val, hasPeer := channel.peers.Get(clientPeerIDString)
+		peer := val.(*Peer)
 		if hasPeer {
 			if clientPeerId == clientPeerIDString {
 				request.success <- NewResponse(NoError)
@@ -965,11 +968,11 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 				channel.output = NewOutputSession(1) //TODO: Replace with some default/config
 			}
 			// Alert the UI that a new message has been recieved in the channel
-			channel.output.messageQueue <- data.Message
+			channel.output.messageQueue <- NewMessage(peer, data.Message)
 		}
 	}
 
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -985,7 +988,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Joining Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Joining Channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -1010,7 +1013,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Joined Channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Joined Channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 }
 
 func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
@@ -1023,7 +1026,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 		return
 	}
 
-	log.Printf("%s: User: %s (%s) Client denied of channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Client denied of channel %s. ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
@@ -1042,13 +1045,13 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 	// Update request data
 	request.fail <- NewResponse(ProtocolErrorState(data.ErrorCode))
 
-	log.Printf("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
 // TODO: Design proper API
 func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string) (*Request, bool) {
-	log.Printf("%s: Sending message to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	p.debugPrintln("%s: Sending message to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientSendMessage{
@@ -1091,7 +1094,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 }
 
 func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
-	log.Printf("%s: Sending request to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	p.debugPrintln("%s: Sending request to %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientTransmissionStart{
@@ -1133,12 +1136,18 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 
 }
 
-func (p *MultilogueProtocol) CreateChannel(channelId string, config *ChannelConfig) {
+// Creates channnel and adds host to room
+func (p *MultilogueProtocol) CreateChannel(clientPeer *Peer, channelId string, config *ChannelConfig) {
 	// Creating Channel Obj
 	_, exists := p.channels.Get(channelId)
 	// remove the channel
 	if !exists {
-		p.channels.Put(channelId, NewChannel(channelId, config))
+		channel := NewChannel(channelId, config)
+		channel.peers.Put(clientPeer.peerID.String(), clientPeer)
+		p.channels.Put(channelId, channel)
+		p.debugPrintln("CreateChannel: Channel created ")
+	} else {
+		p.debugPrintln("CreateChannel: Channel already exists. ")
 	}
 }
 
@@ -1150,7 +1159,7 @@ func (p *MultilogueProtocol) DeleteChannel(channelId string) {
 }
 
 func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
-	log.Printf("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	p.debugPrintln("%s: Joining %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientJoinChannel{
@@ -1197,7 +1206,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 }
 
 func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
-	log.Printf("%s: Leaving %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	p.debugPrintln("%s: Leaving %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientLeaveChannel{
@@ -1246,7 +1255,7 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 }
 
 func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.ID, channelId string) (*Request, bool) {
-	log.Printf("%s: Ending transmission %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
+	p.debugPrintln("%s: Ending transmission %s Channel : %s....", p.node.ID(), hostPeerID, channelId)
 
 	// create message data
 	req := &p2p.ClientTransmissionEnd{
