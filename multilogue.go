@@ -241,21 +241,21 @@ func (p *MultilogueProtocol) onClientSendMessage(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -352,7 +352,7 @@ Response:
 			// sign the data
 			signature, err := p.node.signProtoMessage(resp)
 			if err != nil {
-				log.Println("failed to sign response")
+				p.debugPrintln("failed to sign response")
 				return
 			}
 
@@ -367,7 +367,7 @@ Response:
 			s, respErr = p.node.NewStream(context.Background(), currentPeer.peerID, hostBroadcastMessage)
 
 			if respErr != nil {
-				log.Println(respErr)
+				p.debugPrintln(respErr)
 				return
 			}
 
@@ -388,7 +388,7 @@ Response:
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
 		if err != nil {
-			log.Println("failed to sign response")
+			p.debugPrintln("failed to sign response")
 			return
 		}
 		denyClientResp := resp.(*p2p.HostDenyClient)
@@ -398,7 +398,7 @@ Response:
 		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
 
 		if respErr != nil {
-			log.Println(respErr)
+			p.debugPrintln(respErr)
 			return
 		}
 
@@ -418,21 +418,21 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -519,7 +519,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 			select {
 			case <-channel.currentTransmission.done:
-				log.Println("timer returning, transmission done")
+				p.debugPrintln("timer returning, transmission done")
 				return
 			case <-transmissionTimer.C:
 				channel.currentTransmission.Lock()
@@ -535,7 +535,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
 		if err != nil {
-			log.Println("failed to sign response")
+			p.debugPrintln("failed to sign response")
 			return
 		}
 
@@ -557,7 +557,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
 		if err != nil {
-			log.Println("failed to sign response")
+			p.debugPrintln("failed to sign response")
 			return
 		}
 		denyClientResp := resp.(*p2p.HostDenyClient)
@@ -567,7 +567,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
 	}
 	if respErr != nil {
-		log.Println(respErr)
+		p.debugPrintln(respErr)
 		return
 	}
 
@@ -587,7 +587,7 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -596,14 +596,14 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -623,11 +623,11 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 				channel.currentTransmission.done <- true
 				channel.currentTransmission.Unlock()
 
-				log.Println("timer returned, making current transmisison nil ")
+				p.debugPrintln("timer returned, making current transmisison nil ")
 				channel.Lock()
 				channel.currentTransmission = nil
 				channel.Unlock()
-				log.Println(" current transmisison nil ", channel.currentTransmission)
+				p.debugPrintln(" current transmisison nil ", channel.currentTransmission)
 
 			} else {
 				p.debugPrintln("In onClientTransmissionEnd: currentChannelClient, givenChannelClient , remoteRequester  Not the same.")
@@ -653,21 +653,21 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -711,7 +711,7 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
 		if err != nil {
-			log.Println("failed to sign response")
+			p.debugPrintln("failed to sign response")
 			return
 		}
 
@@ -732,7 +732,7 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 		// sign the data
 		signature, err := p.node.signProtoMessage(resp)
 		if err != nil {
-			log.Println("failed to sign response")
+			p.debugPrintln("failed to sign response")
 			return
 		}
 		denyClientResp := resp.(*p2p.HostDenyClient)
@@ -742,7 +742,7 @@ func (p *MultilogueProtocol) onClientJoinChannel(s inet.Stream) {
 		s, respErr = p.node.NewStream(context.Background(), s.Conn().RemotePeer(), hostDenyClient)
 	}
 	if respErr != nil {
-		log.Println(respErr)
+		p.debugPrintln(respErr)
 		return
 	}
 
@@ -762,7 +762,7 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -771,14 +771,14 @@ func (p *MultilogueProtocol) onClientLeaveChannel(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
@@ -806,7 +806,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -815,21 +815,21 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
 	// If there's no request, then simply print an error and return
 	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
-		log.Println("Request not found ")
+		p.debugPrintln("Request not found ")
 		return
 	}
 	request := val.(*Request)
@@ -870,7 +870,7 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -879,21 +879,21 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
 	// If there's no request, then simply print an error and return
 	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
-		log.Println("Request not found ")
+		p.debugPrintln("Request not found ")
 		return
 	}
 	request := val.(*Request)
@@ -924,7 +924,7 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -935,20 +935,20 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
 	clientPeerID, err := peer.IDFromBytes(data.ClientData.PeerId)
 	clientPeerIDString := clientPeerID.String()
 	if err != nil {
-		log.Println("Failed to obtain Client Peer ID")
+		p.debugPrintln("Failed to obtain Client Peer ID")
 		return
 	}
 
 	val, requestExists := p.requests.Get(data.MessageData.Id)
 	if !requestExists {
-		log.Println("Request not found ")
+		p.debugPrintln("Request not found ")
 		return
 	}
 	request := val.(*Request)
@@ -984,7 +984,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -993,7 +993,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 
@@ -1009,7 +1009,7 @@ func (p *MultilogueProtocol) onHostAcceptClient(s inet.Stream) {
 			request.fail <- NewResponse(GenericError)
 		}
 	} else {
-		log.Println("Failed to locate request data boject for response")
+		p.debugPrintln("Failed to locate request data boject for response")
 		return
 	}
 
@@ -1022,7 +1022,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 	decoder := protobufCodec.Multicodec(nil).Decoder(bufio.NewReader(s))
 	err := decoder.Decode(data)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return
 	}
 
@@ -1031,14 +1031,14 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 	valid := p.node.authenticateMessage(data, data.MessageData)
 
 	if !valid {
-		log.Println("Failed to authenticate message")
+		p.debugPrintln("Failed to authenticate message")
 		return
 	}
 	// If there's no request, then simply print an error and return
 	value, requestExists := p.requests.Get(data.MessageData.Id)
 	request := value.(*Request)
 	if !requestExists {
-		log.Println("Request not found ")
+		p.debugPrintln("Request not found ")
 		return
 	}
 
@@ -1067,7 +1067,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data: ", err)
+		p.debugPrintln("failed to sign pb data: ", err)
 		return nil, false
 	}
 
@@ -1076,7 +1076,7 @@ func (p *MultilogueProtocol) SendMessage(clientPeer *Peer, hostPeerID peer.ID, c
 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientSendMessage)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return nil, false
 	}
 
@@ -1109,7 +1109,7 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data")
+		p.debugPrintln("failed to sign pb data")
 		return nil, false
 	}
 
@@ -1118,7 +1118,7 @@ func (p *MultilogueProtocol) SendTransmissionRequest(clientPeer *Peer, hostPeerI
 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientTransmissionStart)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return nil, false
 	}
 
@@ -1174,7 +1174,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data: ", err)
+		p.debugPrintln("failed to sign pb data: ", err)
 		return nil, false
 	}
 
@@ -1183,7 +1183,7 @@ func (p *MultilogueProtocol) JoinChannel(clientPeer *Peer, hostPeerID peer.ID, c
 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientJoinChannel)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return nil, false
 	}
 
@@ -1221,7 +1221,7 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data")
+		p.debugPrintln("failed to sign pb data")
 		return nil, false
 	}
 
@@ -1230,7 +1230,7 @@ func (p *MultilogueProtocol) LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, 
 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientLeaveChannel)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return nil, false
 	}
 
@@ -1270,7 +1270,7 @@ func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.I
 	// sign the data
 	signature, err := p.node.signProtoMessage(req)
 	if err != nil {
-		log.Println("failed to sign pb data")
+		p.debugPrintln("failed to sign pb data")
 		return nil, false
 	}
 
@@ -1279,7 +1279,7 @@ func (p *MultilogueProtocol) EndTransmission(clientPeer *Peer, hostPeerID peer.I
 
 	s, err := p.node.NewStream(context.Background(), hostPeerID, clientTransmissionEnd)
 	if err != nil {
-		log.Println(err)
+		p.debugPrintln(err)
 		return nil, false
 	}
 
