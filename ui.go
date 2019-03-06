@@ -19,7 +19,6 @@ import (
 
 type UIColor struct {
 	nameColor string
-	textColor string
 }
 
 type ChatUI struct {
@@ -33,7 +32,7 @@ type ChatUI struct {
 	host            *Peer
 }
 
-func NewChatUI(node *Node, channelID string, clientPeer *Peer) *ChatUI {
+func NewChatUI(node *Node, channelID string, clientPeer *Peer, hostPeerID peer.ID) *ChatUI {
 	var seed = rand.NewSource(time.Now().UnixNano())
 	var randomizer = rand.New(seed)
 
@@ -43,7 +42,8 @@ func NewChatUI(node *Node, channelID string, clientPeer *Peer) *ChatUI {
 		colorRandomizer: randomizer,
 		channelID:       channelID,
 		clientPeer:      clientPeer,
-		host:            &Peer{username: channelID}}
+		host:            &Peer{username: "*Channel*"},
+		hostPeerID:      hostPeerID}
 }
 
 func (ui *ChatUI) randomColor() string {
@@ -102,9 +102,10 @@ func (ui *ChatUI) buildMessage(message *Message) string {
 
 func (ui *ChatUI) sendMessage(g *gocui.Gui, v *gocui.View) error {
 	if ui.isTurn {
-		msg := v.Buffer()
-		strings.TrimSpace(msg)
+		msg := strings.TrimSpace(v.Buffer())
+
 		req, _ := ui.node.SendMessage(ui.clientPeer, ui.hostPeerID, ui.channelID, msg)
+		var resp *Response
 		select {
 		case <-req.success:
 			// Clear input panel
@@ -115,12 +116,15 @@ func (ui *ChatUI) sendMessage(g *gocui.Gui, v *gocui.View) error {
 				return nil
 			})
 			break
-		case <-req.fail:
+		case resp = <-req.fail:
 			ui.isTurn = false
-			ui.displayMessage(g, v, ui.buildChannelMessage("Cannot send message because reason."))
+			errorName := ProtocolErrorName(resp.errorCode)
+			errorMsg := "Cannot send message because " + errorName
+			ui.displayMessage(g, v, ui.buildChannelMessage(errorMsg))
 			break
 		case <-time.After(3 * time.Second):
 			// Timeout
+			ui.isTurn = false
 			ui.displayMessage(g, v, ui.buildChannelMessage("Message request timed out. "))
 			break
 		}
@@ -132,20 +136,31 @@ func (ui *ChatUI) sendMessage(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (ui *ChatUI) requestTransmission(g *gocui.Gui, v *gocui.View) error {
-	req, _ := ui.node.SendTransmissionRequest(ui.clientPeer, ui.hostPeerID, ui.channelID)
-	select {
-	case <-req.success:
-		ui.isTurn = true
-		ui.displayMessage(g, v, ui.buildChannelMessage("Transmission strated. "))
-	case <-req.fail:
-		ui.displayMessage(g, v, ui.buildChannelMessage("Transmission not available. "))
+	if !ui.isTurn {
+		req, reqSent := ui.node.SendTransmissionRequest(ui.clientPeer, ui.hostPeerID, ui.channelID)
+		if reqSent {
+			select {
+			case <-req.success:
+				ui.isTurn = true
+				ui.displayMessage(g, v, ui.buildChannelMessage("Transmission strated. "))
+			case <-req.fail:
+				ui.isTurn = false
+				ui.displayMessage(g, v, ui.buildChannelMessage("Transmission not available. "))
+			}
+		} else {
+			ui.isTurn = false
+			ui.node.debugPrintln("Transmission request not completed.")
+		}
 	}
 	return nil
 }
 
 func (ui *ChatUI) endTransmission(g *gocui.Gui, v *gocui.View) error {
-	ui.node.EndTransmission(ui.clientPeer, ui.hostPeerID, ui.channelID)
-	ui.displayMessage(g, v, ui.buildChannelMessage("Transmission ended. "))
+	if ui.isTurn {
+		ui.node.EndTransmission(ui.clientPeer, ui.hostPeerID, ui.channelID)
+		ui.displayMessage(g, v, ui.buildChannelMessage("Transmission ended. "))
+		ui.isTurn = false
+	}
 	return nil
 }
 
@@ -159,8 +174,8 @@ func (ui *ChatUI) StartUI() {
 	g.SetManagerFunc(ui.Layout)
 	g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, ui.sendMessage)
 	g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, ui.exit)
-	g.SetKeybinding("", gocui.KeyInsert, gocui.ModNone, ui.requestTransmission)
-	g.SetKeybinding("", gocui.KeyDelete, gocui.ModNone, ui.endTransmission)
+	g.SetKeybinding("", gocui.KeyHome, gocui.ModNone, ui.requestTransmission)
+	g.SetKeybinding("", gocui.KeyEnd, gocui.ModNone, ui.endTransmission)
 	g.MainLoop()
 }
 
@@ -171,6 +186,7 @@ func (ui *ChatUI) BroadcastPanel(g *gocui.Gui, v *gocui.View, channelID string) 
 		log.Println("Channel not found.")
 		return
 	}
+
 	channel := val.(*Channel)
 
 	var message *Message
@@ -195,15 +211,11 @@ func (ui *ChatUI) displayMessage(g *gocui.Gui, v *gocui.View, message *Message) 
 	if !exists {
 		color = &UIColor{
 			nameColor: ui.randomColor()}
-		if message.peer == ui.host {
-			color.textColor = color.nameColor
-		}
 		ui.colorMap[message.peer.username] = color
 	}
 
 	msg := color.nameColor + message.peer.username +
-		"\u001b[0m" + ":" + color.textColor +
-		message.text + "\u001b[0m"
+		"\u001b[0m" + ":" + message.text + "\u001b[0m"
 
 	// Add to message panel
 	messagesView, _ := g.View("messages")

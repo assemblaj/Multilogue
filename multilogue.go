@@ -73,6 +73,13 @@ func (t *SyncedMap) Get(key string) (interface{}, bool) {
 	value, found := t.values[key]
 	return value, found
 }
+
+func (t *SyncedMap) Size() int {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+	return len(t.values)
+}
+
 func (t *SyncedMap) Delete(key string) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -228,6 +235,29 @@ func (p *MultilogueProtocol) debugPrintln(v ...interface{}) {
 	if p.debug {
 		p.logger.Println(v...)
 	}
+}
+
+func ProtocolErrorName(errorCode ProtocolErrorState) string {
+	var errorName string
+	switch errorCode {
+	case NoError:
+		errorName = "NoError"
+	case GenericError:
+		errorName = "GenericError"
+	case MessageLimitError:
+		errorName = "MessageLimitError"
+	case TimeLimitError:
+		errorName = "TimeLimitError"
+	case CooldownError:
+		errorName = "CooldownError"
+	case HistoryError:
+		errorName = "HistoryError"
+	case RatioError:
+		errorName = "RatioError"
+	default:
+		errorName = "UnknownError"
+	}
+	return errorName
 }
 
 // Handled when hosting
@@ -451,16 +481,20 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 		if !hasPeer {
 			accepted = false
+			p.debugPrintln("Transmission denied, peer not found on channel.")
 		} else {
 			peer = value.(*Peer)
 		}
 
 		if channel.currentTransmission != nil {
+			p.debugPrintln("Transmission denied, current transmission exists.")
 			accepted = false
 		}
 
 		// If its in the last X transmissions
-		if channel.config.HistorySize > 0 { // last 0 would equal the entire array
+		// Also, prevent daedlock situation in which evveryone is being denied due to recent
+		// history.  When there are less peers than the history size, cooldown is enough
+		if channel.config.HistorySize > 0 && channel.peers.Size() > channel.config.HistorySize { // last 0 would equal the entire array
 			var currentHistory []string
 			end := len(channel.history)
 			start := end - channel.config.HistorySize
@@ -473,6 +507,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 
 			for _, peerID := range currentHistory {
 				if clientPeerIDString == peerID {
+					p.debugPrintln("Transmission denied, because of history.")
 					accepted = false
 					errorCode = HistoryError
 				}
@@ -480,16 +515,17 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		}
 
 		if !peer.lastTransmission.IsZero() {
-			p.debugPrintln("In onClientTransmissionStart, Debugging cooldown ")
-			p.debugPrintln("Time since last transmission: ", time.Since(peer.lastTransmission))
-			p.debugPrintln("Cool down period: ", time.Duration(channel.config.CooldownPeriod)*time.Second)
-			if time.Since(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
-				p.debugPrintln("Transmission denied, sent within cooldown period.")
-				accepted = false
-				errorCode = CooldownError
-			}
+			// p.debugPrintln("In onClientTransmissionStart, Debugging cooldown ")
+			// p.debugPrintln("Time since last transmission: ", time.Since(peer.lastTransmission))
+			// p.debugPrintln("Cool down period: ", time.Duration(channel.config.CooldownPeriod)*time.Second)
+			// if time.Since(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
+			// 	p.debugPrintln("Transmission denied, sent within cooldown period.")
+			// 	accepted = false
+			// 	errorCode = CooldownError
+			// }
 		}
 	} else {
+		p.debugPrintln("Transmission denied, channel doesn't exist.")
 		accepted = false
 	}
 
@@ -615,6 +651,10 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 		// remove request from map as we have processed it here
 		_, hasPeer := channel.peers.Get(clientPeerIDString)
 		if hasPeer {
+			if channel.currentTransmission == nil {
+				p.debugPrintln("In onClientTransmissionEnd: Transmisison doesn't exist.")
+				return
+			}
 			currentChannelClient := channel.currentTransmission.peer.peerID.String()
 			givenChannelClient := clientPeerIDString
 			remoteRequester := s.Conn().RemotePeer().String()
@@ -860,7 +900,7 @@ func (p *MultilogueProtocol) onHostAcceptTransmission(s inet.Stream) {
 		channel.currentTransmission = &Transmission{}
 	}
 
-	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) attempting transmission on channel  %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -913,7 +953,7 @@ func (p *MultilogueProtocol) onHostDenyTransmission(s inet.Stream) {
 	request.fail <- NewResponse(ProtocolErrorState(data.ErrorCode))
 
 	p.channels.Delete(data.HostData.ChannelId)
-	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) denied  on channel at peerID  %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -972,7 +1012,7 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		}
 	}
 
-	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) broadcasted on channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -1045,7 +1085,7 @@ func (p *MultilogueProtocol) onHostDenyClient(s inet.Stream) {
 	// Update request data
 	request.fail <- NewResponse(ProtocolErrorState(data.ErrorCode))
 
-	p.debugPrintln("%s: User: %s (%s) Left channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
+	p.debugPrintln("%s: User: %s (%s) denied on channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
 
 }
 
@@ -1143,7 +1183,7 @@ func (p *MultilogueProtocol) CreateChannel(clientPeer *Peer, channelId string, c
 	// remove the channel
 	if !exists {
 		channel := NewChannel(channelId, config)
-		channel.peers.Put(clientPeer.peerID.String(), clientPeer)
+		//channel.peers.Put(clientPeer.peerID.String(), clientPeer)
 		p.channels.Put(channelId, channel)
 		p.debugPrintln("CreateChannel: Channel created ")
 	} else {

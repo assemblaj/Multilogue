@@ -2,18 +2,14 @@ package main
 
 import (
 	"context"
-	"sync"
 
 	libp2p "github.com/libp2p/go-libp2p"
 	crypto "github.com/libp2p/go-libp2p-crypto"
-	discovery "github.com/libp2p/go-libp2p-discovery"
-	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
-	peer "github.com/libp2p/go-libp2p-peer"
 	peerstore "github.com/libp2p/go-libp2p-peerstore"
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
-func connectToHost(config Config) {
+func makeHost(config Config) *Node {
 	ctx := context.Background()
 
 	// libp2p.New constructs a new libp2p Host. Other options can be added
@@ -30,96 +26,53 @@ func connectToHost(config Config) {
 		panic(err)
 	}
 
-	node := NewNode(host)
+	return NewNode(host)
+}
 
-	// ----------------------------
-	// Start a DHT, for use in peer discovery. We can't just make a new DHT
-	// client because we want each peer to maintain its own local copy of the
-	// DHT, so that the bootstrapping node of the DHT can go down without
-	// inhibiting future peer discovery.
-	kademliaDHT, err := libp2pdht.New(ctx, host)
-	if err != nil {
-		panic(err)
-	}
-
-	// Bootstrap the DHT. In the default configuration, this spawns a Background
-	// thread that will refresh the peer table every five minutes.
-	node.debugPrintln("Bootstrapping the DHT")
-	if err = kademliaDHT.Bootstrap(ctx); err != nil {
-		panic(err)
-	}
-
-	// Let's connect to the bootstrap nodes first. They will tell us about the
-	// other nodes in the network.
-	var wg sync.WaitGroup
-	for _, peerAddr := range config.BootstrapPeers {
-		peerinfo, _ := peerstore.InfoFromP2pAddr(peerAddr)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := host.Connect(ctx, *peerinfo); err != nil {
-				node.debugPrintln(err)
-			} else {
-				node.debugPrintln("Connection established with bootstrap node:", *peerinfo)
-			}
-		}()
-	}
-	wg.Wait()
-
-	// We use a rendezvous point "meet me here" to announce our location.
-	// This is like telling your friends to meet you at the Eiffel Tower.
-
-	node.debugPrintln("Announcing ourselves...")
-
-	routingDiscovery := discovery.NewRoutingDiscovery(kademliaDHT)
-	discovery.Advertise(ctx, routingDiscovery, config.RendezvousString)
-
-	node.debugPrintln("Successfully announced!")
-
-	// Now, look for others who have announced
-	// This is like your friend telling you the location to meet you.
-
-	node.debugPrintln("Searching for other peers...")
-
-	peerChan, err := routingDiscovery.FindPeers(ctx, config.RendezvousString)
-	if err != nil {
-		panic(err)
-	}
+func startMultilogue(config Config) {
+	client := makeHost(config)
 
 	clientPeer := &Peer{
-		peerID:   host.ID(),
+		peerID:   client.ID(),
 		username: config.Username}
 
-	if config.HostPeerID != "" {
-		hostID, err := peer.IDB58Decode(config.HostPeerID)
+	var chatUI *ChatUI
+	if config.HostMultiAddress != "" {
+		maddr, err := multiaddr.NewMultiaddr(config.HostMultiAddress)
 		if err != nil {
-			node.debugPrintln("Invalid peerId.")
-			return
+			client.debugPrintln(err)
 		}
-		for peer := range peerChan {
-			if peer.ID == host.ID() {
-				continue
-			}
-			if peer.ID == hostID {
-				node.JoinChannel(clientPeer, peer.ID, config.ChannelName)
-			}
-			// if peer ID == peer.ID
+
+		info, err := peerstore.InfoFromP2pAddr(maddr)
+		if err != nil {
+			client.debugPrintln(err)
 		}
+
+		client.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+
+		client.JoinChannel(clientPeer, info.ID, config.ChannelName)
+		chatUI = NewChatUI(client, config.ChannelName, clientPeer, info.ID)
 	} else {
+		host := makeHost(config)
+		hostID := host.ID()
+
+		host.Peerstore().AddAddrs(client.ID(), client.Addrs(), peerstore.PermanentAddrTTL)
+		client.Peerstore().AddAddrs(host.ID(), host.Addrs(), peerstore.PermanentAddrTTL)
+
 		var channelConfig *ChannelConfig
 		if config.ChannelConfigFile == "" {
 			channelConfig = DefaultChannelConfig()
 		} else {
 			ReadChannelConfigs(config.ChannelConfigFile, channelConfig)
 		}
-		node.CreateChannel(clientPeer, config.ChannelName, DefaultChannelConfig())
+		host.CreateChannel(clientPeer, config.ChannelName, channelConfig)
+		client.JoinChannel(clientPeer, hostID, config.ChannelName)
+		chatUI = NewChatUI(client, config.ChannelName, clientPeer, hostID)
 	}
 
-	chatUI := NewChatUI(node, config.ChannelName, clientPeer)
 	chatUI.StartUI()
 	// there was a way to enter peer id lol
 	select {}
-
 }
 
 func main() {
@@ -129,5 +82,5 @@ func main() {
 		panic(err)
 	}
 
-	connectToHost(config)
+	startMultilogue(config)
 }
