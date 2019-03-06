@@ -65,7 +65,7 @@ func (ui *ChatUI) Layout(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		messages.Title = " messages: "
+		messages.Title = ui.channelID + ": "
 		messages.Autoscroll = true
 		messages.Wrap = true
 
@@ -78,7 +78,7 @@ func (ui *ChatUI) Layout(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		input.Title = " send: "
+		input.Title = ui.clientPeer.username + ": "
 		input.Autoscroll = false
 		input.Wrap = true
 		input.Editable = true
