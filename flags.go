@@ -10,6 +10,7 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,7 +62,7 @@ type Config struct {
 	BootstrapPeers    addrList
 	ListenAddresses   addrList
 	ProtocolID        string
-	HostPeerID        string
+	HostMultiAddress  string
 	ChannelConfigFile string
 	ChannelName       string
 	Username          string
@@ -76,16 +77,18 @@ type ChannelConfig struct {
 }
 
 func ParseFlags() (Config, error) {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
 	config := Config{}
 	flag.StringVar(&config.RendezvousString, "rendezvous", "gravitation",
 		"Unique string to identify group of nodes. Share this with your friends to let them connect with you")
 	flag.Var(&config.BootstrapPeers, "peer", "Adds a peer multiaddress to the bootstrap list")
 	flag.Var(&config.ListenAddresses, "listen", "Adds a multiaddress to the listen list")
 	flag.StringVar(&config.ProtocolID, "pid", "/chat/1.1.0", "Sets a protocol id for stream headers")
-	flag.StringVar(&config.HostPeerID, "host", "", "Peer ID of host")
-	flag.StringVar(&config.ChannelName, "channel", "", "Name of channel to be joined.")
+	flag.StringVar(&config.HostMultiAddress, "host", "", "MultiAddress of host")
+	flag.StringVar(&config.ChannelName, "channel", "test", "Name of channel to be joined.")
 	flag.StringVar(&config.ChannelConfigFile, "config", "", "Channel config file.")
-	flag.StringVar(&config.Username, "user", time.Now().String(), "Username.")
+	flag.StringVar(&config.Username, "user", timestamp, "Username.")
 
 	flag.Parse()
 
@@ -116,8 +119,8 @@ func DefaultChannelConfig() *ChannelConfig {
 	defaultChannelConfig := &ChannelConfig{
 		MessageLimit:    5,
 		CooldownPeriod:  30,  // Seconds
-		TimeLimit:       3,   // Minutes
-		MaxMessageRatio: .05, // Between 0, 1
+		TimeLimit:       180, // Minutes
+		MaxMessageRatio: 8,   // for now
 		HistorySize:     2}
 
 	return defaultChannelConfig
