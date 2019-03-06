@@ -410,6 +410,14 @@ Response:
 	} else {
 		//peer := channel.peers[clientPeerIDString]
 
+		// ending transmission
+		channel.currentTransmission.done <- true
+
+		channel.Lock()
+		channel.currentTransmission = nil
+		channel.Unlock()
+		p.debugPrintln("In onClientSendMessage:  Ending transmission because of denial.  ")
+
 		resp = &p2p.HostDenyClient{MessageData: p.node.NewMessageData(data.MessageData.Id, false),
 			ClientData: data.ClientData,
 			HostData:   data.HostData,
@@ -482,6 +490,7 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		if !hasPeer {
 			accepted = false
 			p.debugPrintln("Transmission denied, peer not found on channel.")
+			goto Response
 		} else {
 			peer = value.(*Peer)
 		}
@@ -489,46 +498,29 @@ func (p *MultilogueProtocol) onClientTransmissionStart(s inet.Stream) {
 		if channel.currentTransmission != nil {
 			p.debugPrintln("Transmission denied, current transmission exists.")
 			accepted = false
+			goto Response
 		}
 
-		// If its in the last X transmissions
-		// Also, prevent daedlock situation in which evveryone is being denied due to recent
-		// history.  When there are less peers than the history size, cooldown is enough
-		if channel.config.HistorySize > 0 && channel.peers.Size() > channel.config.HistorySize { // last 0 would equal the entire array
-			var currentHistory []string
-			end := len(channel.history)
-			start := end - channel.config.HistorySize
-
-			if start < 0 {
-				currentHistory = channel.history[0:end]
-			} else {
-				currentHistory = channel.history[start:end]
-			}
-
-			for _, peerID := range currentHistory {
-				if clientPeerIDString == peerID {
-					p.debugPrintln("Transmission denied, because of history.")
+		if len(channel.history) > 0 {
+			lastPeer := channel.history[len(channel.history)-1]
+			if peer.peerID.String() == lastPeer {
+				time.Sleep(time.Duration(channel.config.CooldownPeriod) * time.Millisecond)
+				channel.Lock()
+				if channel.currentTransmission != nil {
+					p.debugPrintln("Transmission denied, other request recieved during cooldown period.")
 					accepted = false
-					errorCode = HistoryError
+					errorCode = CooldownError
 				}
+				channel.Unlock()
+				goto Response
 			}
-		}
-
-		if !peer.lastTransmission.IsZero() {
-			// p.debugPrintln("In onClientTransmissionStart, Debugging cooldown ")
-			// p.debugPrintln("Time since last transmission: ", time.Since(peer.lastTransmission))
-			// p.debugPrintln("Cool down period: ", time.Duration(channel.config.CooldownPeriod)*time.Second)
-			// if time.Since(peer.lastTransmission) < time.Duration(channel.config.CooldownPeriod)*time.Second {
-			// 	p.debugPrintln("Transmission denied, sent within cooldown period.")
-			// 	accepted = false
-			// 	errorCode = CooldownError
-			// }
 		}
 	} else {
 		p.debugPrintln("Transmission denied, channel doesn't exist.")
 		accepted = false
+		goto Response
 	}
-
+Response:
 	// generate response message
 	// Returning separate messages based on accepted or not
 	var resp proto.Message
@@ -663,11 +655,10 @@ func (p *MultilogueProtocol) onClientTransmissionEnd(s inet.Stream) {
 				channel.currentTransmission.done <- true
 				channel.currentTransmission.Unlock()
 
-				p.debugPrintln("timer returned, making current transmisison nil ")
 				channel.Lock()
 				channel.currentTransmission = nil
 				channel.Unlock()
-				p.debugPrintln(" current transmisison nil ", channel.currentTransmission)
+				p.debugPrintln("In onClientTransmissionEnd:  Ending transmission.  ")
 
 			} else {
 				p.debugPrintln("In onClientTransmissionEnd: currentChannelClient, givenChannelClient , remoteRequester  Not the same.")

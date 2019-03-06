@@ -118,7 +118,7 @@ func DefaultChannelConfig() *ChannelConfig {
 
 	defaultChannelConfig := &ChannelConfig{
 		MessageLimit:    5,
-		CooldownPeriod:  30,  // Seconds
+		CooldownPeriod:  200, // Seconds
 		TimeLimit:       180, // Minutes
 		MaxMessageRatio: 8,   // for now
 		HistorySize:     2}
