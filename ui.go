@@ -142,10 +142,12 @@ func (ui *ChatUI) requestTransmission(g *gocui.Gui, v *gocui.View) error {
 			select {
 			case <-req.success:
 				ui.isTurn = true
-				ui.displayMessage(g, v, ui.buildChannelMessage("Transmission strated. "))
+				msg := "Transmission strated,  " + ui.clientPeer.username
+				ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 			case <-req.fail:
 				ui.isTurn = false
-				ui.displayMessage(g, v, ui.buildChannelMessage("Transmission not available. "))
+				msg := "Transmission not available,  " + ui.clientPeer.username
+				ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 			}
 		} else {
 			ui.isTurn = false
@@ -158,7 +160,8 @@ func (ui *ChatUI) requestTransmission(g *gocui.Gui, v *gocui.View) error {
 func (ui *ChatUI) endTransmission(g *gocui.Gui, v *gocui.View) error {
 	if ui.isTurn {
 		ui.node.EndTransmission(ui.clientPeer, ui.hostPeerID, ui.channelID)
-		ui.displayMessage(g, v, ui.buildChannelMessage("Transmission ended. "))
+		msg := "Transmission ended,  " + ui.clientPeer.username
+		ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 		ui.isTurn = false
 	}
 	return nil
