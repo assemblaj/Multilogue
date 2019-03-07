@@ -6,10 +6,7 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"io/ioutil"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -68,14 +65,6 @@ type Config struct {
 	Username          string
 }
 
-type ChannelConfig struct {
-	MessageLimit    int
-	CooldownPeriod  int
-	TimeLimit       int
-	MaxMessageRatio float64
-	HistorySize     int
-}
-
 func ParseFlags() (Config, error) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
@@ -101,27 +90,4 @@ func ParseFlags() (Config, error) {
 	}
 
 	return config, nil
-}
-
-func ReadChannelConfigs(fname string, config *ChannelConfig) {
-	b, err := ioutil.ReadFile(fname)
-	if err != nil {
-		log.Println("Error reading data from file. ")
-	}
-	err = json.Unmarshal(b, config)
-	if err != nil {
-		log.Println("Error loading data. ")
-	}
-}
-
-func DefaultChannelConfig() *ChannelConfig {
-
-	defaultChannelConfig := &ChannelConfig{
-		MessageLimit:    5,
-		CooldownPeriod:  200, // Seconds
-		TimeLimit:       180, // Minutes
-		MaxMessageRatio: 8,   // for now
-		HistorySize:     2}
-
-	return defaultChannelConfig
 }
