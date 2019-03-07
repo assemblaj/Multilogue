@@ -311,6 +311,8 @@ func TestEndTransmission(t *testing.T) {
 
 }
 
+// need to have 3 hosts here
+// the 2nd  compete
 func TestCooldown(t *testing.T) {
 	rand.Seed(666)
 	port := rand.Intn(100) + 10000
