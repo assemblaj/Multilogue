@@ -204,12 +204,14 @@ func NewMultilogueProtocol(node *Node) *MultilogueProtocol {
 		debug:    true,
 		logger:   initDebugLogger()}
 
+	// Server functions
 	node.SetStreamHandler(clientJoinChannel, p.onClientJoinChannel)
 	node.SetStreamHandler(clientLeaveChannel, p.onClientLeaveChannel)
 	node.SetStreamHandler(clientSendMessage, p.onClientSendMessage)
 	node.SetStreamHandler(clientTransmissionStart, p.onClientTransmissionStart)
 	node.SetStreamHandler(clientTransmissionEnd, p.onClientTransmissionEnd)
 
+	// Client functions
 	node.SetStreamHandler(hostAcceptClient, p.onHostAcceptClient)
 	node.SetStreamHandler(hostDenyClient, p.onHostDenyClient)
 	node.SetStreamHandler(hostAcceptTransmission, p.onHostAcceptTransmission)
@@ -977,30 +979,30 @@ func (p *MultilogueProtocol) onHostBroadcastMessage(s inet.Stream) {
 		return
 	}
 
-	val, requestExists := p.requests.Get(data.MessageData.Id)
-	if !requestExists {
-		p.debugPrintln("Request not found ")
-		return
-	}
-	request := val.(*Request)
-
 	// Protocol Logic
 	// Leaving channel
 	value, exists := p.channels.Get(data.HostData.ChannelId)
 	if exists {
 		channel := value.(*Channel)
-		val, hasPeer := channel.peers.Get(clientPeerIDString)
-		peer := val.(*Peer)
-		if hasPeer {
-			if clientPeerId == clientPeerIDString {
+		if clientPeerId == clientPeerIDString {
+			val, requestExists := p.requests.Get(data.MessageData.Id)
+			if !requestExists {
+				// TODO: Is this redundant?
+				p.debugPrintln("onHostBroadcastMessage: Request not found")
+			} else {
+				request := val.(*Request)
 				request.success <- NewResponse(NoError)
 			}
-			if channel.output == nil {
-				channel.output = NewOutputSession(1) //TODO: Replace with some default/config
-			}
-			// Alert the UI that a new message has been recieved in the channel
-			channel.output.messageQueue <- NewMessage(peer, data.Message)
 		}
+		if channel.output == nil {
+			channel.output = NewOutputSession(1) //TODO: Replace with some default/config
+		}
+		// Alert the UI that a new message has been recieved in the channel
+		channel.output.messageQueue <- NewMessage(&Peer{
+			peerID:   clientPeerID,
+			username: data.ClientData.Username,
+		}, data.Message)
+		p.debugPrintln("onHostBroadcastMessage: New message being added to output queue ")
 	}
 
 	p.debugPrintln("%s: User: %s (%s) broadcasted on channel %s ", s.Conn().LocalPeer(), data.ClientData.Username, s.Conn().RemotePeer(), data.HostData.ChannelId)
