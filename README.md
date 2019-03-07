@@ -26,6 +26,7 @@ Multiadress listed on title bar.
 [CTRL+C] : Exit program 
 
 ## Library Functions: 
+```
 // Host functions
 CreateChannel(clientPeer *Peer, channelId string, config *ChannelConfig)
 
@@ -37,15 +38,18 @@ SendTransmissionRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string)
 EndTransmission(clientPeer *Peer, hostPeerID peer.ID, channelId string)
 
 SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string)
+```
 
 Requests that require an asynchronous response are handled as follows 
 
+```
 select {
     case <-request.success:
        ...
     case <-request.fail:
        ...
 }
+```
 
 Each request channel returns a Response struct, which contains the rror code for the 
 request. 
