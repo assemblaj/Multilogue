@@ -25,7 +25,7 @@ Multiadress listed on title bar.
 [End]  : End Turn   
 [CTRL+C] : Exit program    
 
-## Library Functions: 
+## Multilogue Protocol Functions: 
 ```
 // Host functions
 CreateChannel(clientPeer *Peer, channelId string, config *ChannelConfig)
