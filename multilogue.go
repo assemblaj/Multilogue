@@ -1,4 +1,4 @@
-package multilogue
+package main
 
 import (
 	"bufio"
