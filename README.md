@@ -21,9 +21,9 @@ Multiadress listed on title bar.
 ./Multilogue -channel {channel} -host {multiaddress} : Join channel at that specific multiadress 
 
 ## Controls: 
-[Insert] : Start turn 
-[End]  : End Turn 
-[CTRL+C] : Exit program 
+[Insert] : Start turn   
+[End]  : End Turn   
+[CTRL+C] : Exit program    
 
 ## Library Functions: 
 ```
