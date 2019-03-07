@@ -1,12 +1,13 @@
-
 # Multilogue
-Multilogue Chat protocol 
+Multilogue: Half-duplex p2p chat protocol 
 
 
 ## Summary: 
-- Local peers send a "gravitation" request which includes a Metadata ID (list of properties that describe the peer) and their "orbit" (a collection of peers they've collected and their properties). 
-- Remote peers respond with the same information 
-- Upon recieving a gravitation request or response, both peers determine whether to accept a peer into their orbit based on their Metadata ID, and their orbits, as well as performing this process on the remote peers' orbit as well. 
+- One user can speak in a channel at a time. 
+- Users must request a transmission before starting their turn. 
+- After certain conditions are met (time limit, message limit, etc), the user's turn ends.
+- The user can also voluntarily end their turn. 
+- After each users turn, they are subject to a cooldown in which their requests are deprioritized. 
 
 ## How to use: 
 Clone the project
@@ -19,3 +20,34 @@ Multiadress listed on title bar.
 
 ./Multilogue -channel {channel} -host {multiaddress} : Join channel at that specific multiadress 
 
+## Controls: 
+[Insert] : Start turn 
+[End]  : End Turn 
+[CTRL+C] : Exit program 
+
+## Library Functions: 
+// Host functions
+CreateChannel(clientPeer *Peer, channelId string, config *ChannelConfig)
+
+// Client functions
+JoinChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string) 
+LeaveChannel(clientPeer *Peer, hostPeerID peer.ID, channelId string)
+
+SendTransmissionRequest(clientPeer *Peer, hostPeerID peer.ID, channelId string) 
+EndTransmission(clientPeer *Peer, hostPeerID peer.ID, channelId string)
+
+SendMessage(clientPeer *Peer, hostPeerID peer.ID, channelId string, message string)
+
+Requests that require an asynchronous response are handled as follows 
+
+select {
+    case <-request.success:
+       ...
+    case <-request.fail:
+       ...
+}
+
+Each request channel returns a Response struct, which contains the rror code for the 
+request. 
+
+See ui.go and main.go for examples. 
