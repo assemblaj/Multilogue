@@ -51,7 +51,7 @@ func startMultilogue(config Config) {
 		client.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 
 		client.JoinChannel(clientPeer, info.ID, config.ChannelName)
-		chatUI = NewChatUI(client, config.ChannelName, clientPeer, info.ID)
+		chatUI = NewChatUI(client, config.ChannelName, clientPeer, info.ID, config.HostMultiAddress)
 	} else {
 		host := makeHost(config)
 		hostID := host.ID()
@@ -67,7 +67,13 @@ func startMultilogue(config Config) {
 		}
 		host.CreateChannel(clientPeer, config.ChannelName, channelConfig)
 		client.JoinChannel(clientPeer, hostID, config.ChannelName)
-		chatUI = NewChatUI(client, config.ChannelName, clientPeer, hostID)
+		// addresses := ""
+		// for _, element := range host.Addrs() {
+		// 	// index is the index where we are
+		// 	// element is the element from someSlice for where we are
+		// 	addresses = addresses + element.String() + " "
+		// }
+		chatUI = NewChatUI(client, config.ChannelName, clientPeer, hostID, host.Addrs()[0].String())
 	}
 
 	chatUI.StartUI()

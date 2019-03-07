@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,9 +31,10 @@ type ChatUI struct {
 	hostPeerID      peer.ID
 	isTurn          bool
 	host            *Peer
+	hostMA          string
 }
 
-func NewChatUI(node *Node, channelID string, clientPeer *Peer, hostPeerID peer.ID) *ChatUI {
+func NewChatUI(node *Node, channelID string, clientPeer *Peer, hostPeerID peer.ID, hostMA string) *ChatUI {
 	var seed = rand.NewSource(time.Now().UnixNano())
 	var randomizer = rand.New(seed)
 
@@ -43,7 +45,8 @@ func NewChatUI(node *Node, channelID string, clientPeer *Peer, hostPeerID peer.I
 		channelID:       channelID,
 		clientPeer:      clientPeer,
 		host:            &Peer{username: "*Channel*"},
-		hostPeerID:      hostPeerID}
+		hostPeerID:      hostPeerID,
+		hostMA:          hostMA}
 }
 
 func (ui *ChatUI) randomColor() string {
@@ -65,7 +68,7 @@ func (ui *ChatUI) Layout(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		messages.Title = ui.channelID + ": "
+		messages.Title = ui.channelID + ": " + ui.hostMA
 		messages.Autoscroll = true
 		messages.Wrap = true
 
@@ -92,6 +95,8 @@ func (ui *ChatUI) Layout(g *gocui.Gui) error {
 
 func (ui *ChatUI) exit(g *gocui.Gui, v *gocui.View) error {
 	ui.node.LeaveChannel(ui.clientPeer, ui.hostPeerID, ui.channelID)
+	g.Close()
+	os.Exit(0)
 	return gocui.ErrQuit
 }
 
@@ -119,7 +124,7 @@ func (ui *ChatUI) sendMessage(g *gocui.Gui, v *gocui.View) error {
 		case resp = <-req.fail:
 			ui.isTurn = false
 			errorName := ProtocolErrorName(resp.errorCode)
-			errorMsg := "Cannot send message because " + errorName
+			errorMsg := ui.clientPeer.username + " turn finished because " + errorName
 			ui.displayMessage(g, v, ui.buildChannelMessage(errorMsg))
 			break
 		case <-time.After(3 * time.Second):
@@ -142,11 +147,11 @@ func (ui *ChatUI) requestTransmission(g *gocui.Gui, v *gocui.View) error {
 			select {
 			case <-req.success:
 				ui.isTurn = true
-				msg := "Transmission strated,  " + ui.clientPeer.username
+				msg := ui.clientPeer.username + " turn strated  "
 				ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 			case <-req.fail:
 				ui.isTurn = false
-				msg := "Transmission not available,  " + ui.clientPeer.username
+				msg := "Can't start turn,  " + ui.clientPeer.username
 				ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 			}
 		} else {
@@ -160,7 +165,7 @@ func (ui *ChatUI) requestTransmission(g *gocui.Gui, v *gocui.View) error {
 func (ui *ChatUI) endTransmission(g *gocui.Gui, v *gocui.View) error {
 	if ui.isTurn {
 		ui.node.EndTransmission(ui.clientPeer, ui.hostPeerID, ui.channelID)
-		msg := "Transmission ended,  " + ui.clientPeer.username
+		msg := ui.clientPeer.username + " turn ended."
 		ui.displayMessage(g, v, ui.buildChannelMessage(msg))
 		ui.isTurn = false
 	}
