@@ -201,6 +201,9 @@ func (ui *ChatUI) BroadcastPanel(g *gocui.Gui, v *gocui.View, channelID string) 
 	for {
 		select {
 		case message = <-channel.output.messageQueue:
+			msgString := "From UI, message reqcieved " + message.text
+			ui.node.debugPrintln(msgString)
+
 			ui.displayMessage(g, v, message)
 			break
 		}

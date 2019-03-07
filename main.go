@@ -41,11 +41,13 @@ func startMultilogue(config Config) {
 		maddr, err := multiaddr.NewMultiaddr(config.HostMultiAddress)
 		if err != nil {
 			client.debugPrintln(err)
+			panic(err)
 		}
 
 		info, err := peerstore.InfoFromP2pAddr(maddr)
 		if err != nil {
 			client.debugPrintln(err)
+			panic(err)
 		}
 
 		client.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
@@ -67,13 +69,15 @@ func startMultilogue(config Config) {
 		}
 		host.CreateChannel(clientPeer, config.ChannelName, channelConfig)
 		client.JoinChannel(clientPeer, hostID, config.ChannelName)
-		// addresses := ""
-		// for _, element := range host.Addrs() {
-		// 	// index is the index where we are
-		// 	// element is the element from someSlice for where we are
-		// 	addresses = addresses + element.String() + " "
-		// }
-		chatUI = NewChatUI(client, config.ChannelName, clientPeer, hostID, host.Addrs()[0].String())
+		hostIDStr := host.ID().Pretty()
+		addresses := ""
+		for _, element := range host.Addrs() {
+			// index is the index where we are
+			// element is the element from someSlice for where we are
+			addresses = addresses + element.String() + "/p2p/" + hostIDStr + " "
+		}
+
+		chatUI = NewChatUI(client, config.ChannelName, clientPeer, hostID, addresses)
 	}
 
 	chatUI.StartUI()
