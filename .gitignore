@@ -1,6 +1,7 @@
-!/pkg/multilogue/*
-!/log
 
-Multilogue
 
 *.log
+
+
+!/log
+
