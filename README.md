@@ -14,11 +14,11 @@ Clone the project
 make deps 
 go build 
 
-./Multilogue -channel {channel} : Create and join new channel.
+./Multilogue  -user {username} -channel {channel} : Create and join new channel.
 
 Multiadress listed on title bar. 
 
-./Multilogue -channel {channel} -host {multiaddress} : Join channel at that specific multiadress 
+./Multilogue  -user {username} -channel {channel} -host {multiaddress} : Join channel at that specific multiadress 
 
 ## Controls: 
 [Insert] : Start turn   
