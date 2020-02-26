@@ -1,5 +1,5 @@
 # Multilogue
-Multilogue: Half-duplex p2p chat protocol 
+Multilogue: non-simultaneous p2p chat protocol  
 
 
 ## Summary: 
